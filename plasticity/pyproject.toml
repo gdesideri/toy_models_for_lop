@@ -1,0 +1,18 @@
+[project]
+name = "plasticity"
+version = "0.2.0"
+description = "Plasticity experiments: toy models, memorization, and representation settings"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.4",
+    "scipy>=1.17.1",
+    "torch>=2.11.0",
+    "torchvision>=0.20.0",
+    "h5py>=3.11.0",
+    "wandb>=0.19.0",
+    "requests>=2.32.0",
+]
