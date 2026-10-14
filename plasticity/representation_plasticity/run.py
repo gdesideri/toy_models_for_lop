@@ -7,7 +7,7 @@ Run:
         --switch_every 2000 --n_cycles 2
 
 The script loads Shapes3D from the data cache (must be downloaded first via
-    from data.download import get_shapes3d; get_shapes3d()
+    from data.download import download_shapes3d; download_shapes3d()
 ).
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ import torch.nn.functional as F
 from data.download import load_shapes3d_array
 from models.factory import build_model, build_optimizer
 from models.ewc import EWC
-from representation_plasticity.stream import (
+from tasks.feature_streams import (
     Shapes3DDataset, FeatureOverlapLadder, FeatureConflictStream,
     FeatureIntroductionStream, FACTOR_NAMES,
 )
@@ -60,7 +60,7 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--layer_norm", action="store_true")
 
     # Optimizer
-    p.add_argument("--optimizer",  default="adam",   choices=["adam","sgd"])
+    p.add_argument("--optimizer",  default="sgd",    choices=["adam","sgd"])
     p.add_argument("--lr",         type=float, default=1e-3)
     p.add_argument("--use_ewc",    action="store_true")
     p.add_argument("--ewc_lambda", type=float, default=5000.0)

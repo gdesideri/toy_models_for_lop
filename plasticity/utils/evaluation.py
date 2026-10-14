@@ -1,0 +1,101 @@
+"""
+utils/evaluation.py — Loss and accuracy of a classifier over a DataLoader, the
+representations a frozen network gives a dataset, and how many hidden units of a
+ReLU MLP are still alive.
+"""
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+
+
+def evaluate(model, loader, criterion, device):
+    model.eval()
+    total_loss, correct, n = 0.0, 0, 0
+    with torch.no_grad():
+        for x, y in loader:
+            x, y = x.to(device), y.to(device)
+            logits = model(x)
+            total_loss += criterion(logits, y).item() * y.size(0)
+            correct += n_correct(logits, y, criterion)
+            n += y.size(0)
+    return total_loss / n, correct / n
+
+
+def n_correct(logits, y, criterion=None):
+    """
+    Number of correct predictions in a batch: argmax over the classes, unless the
+    criterion defines its own n_correct (e.g. one target per latent factor).
+    """
+    if criterion is not None and hasattr(criterion, "n_correct"):
+        return criterion.n_correct(logits, y)
+    return (logits.argmax(dim=1) == y).sum().item()
+
+
+def extract_features(encoder, loader, device):
+    """
+    (z, targets) over a whole DataLoader: z = encoder(x) for every input, in loader
+    order, under no_grad, both concatenated on `device`. For a frozen encoder this
+    is the cache of its representation of the dataset.
+    """
+    encoder.eval()
+    zs, ys = [], []
+    with torch.no_grad():
+        for x, y in loader:
+            zs.append(encoder(x.to(device)))
+            ys.append(torch.as_tensor(y).to(device))
+    return torch.cat(zs), torch.cat(ys)
+
+
+def alive_units(model, x, batch_size=1024):
+    """
+    Per hidden layer of a ReLU MLP (models.mlp.MLP), the number of units whose
+    output is > 0 for at least one input in `x`. A unit that is 0 on every input
+    is dead: it passes no signal forward and receives no gradient.
+    """
+    return [int(m.sum()) for m in alive_masks(model, x, batch_size)]
+
+
+def alive_masks(model, x, batch_size=1024):
+    """Per hidden layer, a boolean tensor: which units are alive (> 0 on some input of `x`)."""
+    return alive_masks_over(model, (x[i:i + batch_size] for i in range(0, len(x), batch_size)))
+
+
+def alive_masks_over(model, batches):
+    """alive_masks over an iterable of input batches, e.g. a whole training set streamed batch by batch."""
+    if not hasattr(model, "body"):
+        raise ValueError(f"{type(model).__name__} has no .body of hidden layers")
+    alive = None
+    model.eval()
+    with torch.no_grad():
+        for xb in batches:
+            h = model.flatten(xb) if hasattr(model, "flatten") else xb
+            batch = []
+            for layer in model.body:
+                h = layer(h)
+                if isinstance(layer, nn.ReLU):
+                    batch.append((h > 0).any(dim=0))
+            alive = batch if alive is None else [a | b for a, b in zip(alive, batch)]
+    return [a.cpu() for a in alive]
+
+
+def activation_rates_over(model, batches):
+    """
+    Per hidden layer of a ReLU MLP, the fraction of the inputs in `batches` on which
+    each unit is active (output > 0): 0 = dead on this data, 1 = active on every input.
+    """
+    if not hasattr(model, "body"):
+        raise ValueError(f"{type(model).__name__} has no .body of hidden layers")
+    counts, n = None, 0
+    model.eval()
+    with torch.no_grad():
+        for xb in batches:
+            h = model.flatten(xb) if hasattr(model, "flatten") else xb
+            batch = []
+            for layer in model.body:
+                h = layer(h)
+                if isinstance(layer, nn.ReLU):
+                    batch.append((h > 0).sum(dim=0))
+            counts = batch if counts is None else [a + b for a, b in zip(counts, batch)]
+            n += len(xb)
+    return [(c.double() / n).cpu() for c in counts]

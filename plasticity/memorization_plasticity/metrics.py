@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from memorization_plasticity.stream import RandomizedLabelStream
+from tasks.randomized_labels import RandomizedLabelStream
 
 
 @torch.no_grad()

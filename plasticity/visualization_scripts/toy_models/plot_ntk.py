@@ -9,7 +9,7 @@ results/ntk/ and produces:
   Fig C — Cumulative explained variance by top-k eigenmodes
   Fig D — Residual alignment: alignment_k and speed_k = λ_k * align_k per mode
 
-Run with:  uv run python notebooks/plot_ntk.py
+Run with:  uv run python visualization_scripts/toy_models/plot_ntk.py
 """
 import json, os, sys
 import numpy as np
@@ -17,7 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-RESULTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 NTK_DIR = os.path.join(RESULTS, "ntk")
 OUT_DIR = NTK_DIR
 

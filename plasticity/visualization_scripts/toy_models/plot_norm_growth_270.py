@@ -12,7 +12,7 @@ For each n_test condition generates:
 One summary figure:
   figD_norm_growth_270.png           — LoP gap vs n_test, compared with 180° case
 
-Run with:  uv run python notebooks/plot_norm_growth_270.py
+Run with:  uv run python visualization_scripts/toy_models/plot_norm_growth_270.py
 """
 import json, os, math
 import numpy as np
@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 
-RESULTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 OUT_DIR = os.path.join(RESULTS, "norm_growth_270")
 os.makedirs(OUT_DIR, exist_ok=True)
 

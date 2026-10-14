@@ -39,8 +39,8 @@ import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from src.benchmark import make_rng
-from src.models import build_model
+from tasks.toy_regression import make_rng
+from models.factory import build_model
 
 # ── Config ────────────────────────────────────────────────────────────────────
 

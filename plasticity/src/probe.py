@@ -12,7 +12,7 @@ import math
 import torch
 import torch.nn as nn
 
-from src.benchmark import Task, make_rng
+from tasks.toy_regression import Task, make_rng
 from src.train import train_on_task, mse_loss
 
 

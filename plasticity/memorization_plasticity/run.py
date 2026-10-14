@@ -3,7 +3,7 @@ memorization_plasticity/run.py — Experiment runner for the memorization settin
 
 Run:
     uv run python -m memorization_plasticity.run --dataset cifar10 --arch mlp_2x512 \
-        --activation relu --optimizer adam --p_change 0.1 --L 500
+        --activation relu --optimizer sgd --p_change 0.1 --L 500
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from data.download import get_mnist, get_cifar10
 from models.factory import build_model, build_optimizer
 from models.ewc import EWC
-from memorization_plasticity.stream import RandomizedLabelStream, StreamConfig
+from tasks.randomized_labels import RandomizedLabelStream, StreamConfig
 from memorization_plasticity.metrics import compute_all_metrics
 
 try:
@@ -48,7 +48,7 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--layer_norm", action="store_true")
 
     # Optimizer
-    p.add_argument("--optimizer",  default="adam",   choices=["adam","sgd"])
+    p.add_argument("--optimizer",  default="sgd",    choices=["adam","sgd"])
     p.add_argument("--lr",         type=float, default=1e-3)
     p.add_argument("--use_ewc",    action="store_true")
     p.add_argument("--ewc_lambda", type=float, default=5000.0)

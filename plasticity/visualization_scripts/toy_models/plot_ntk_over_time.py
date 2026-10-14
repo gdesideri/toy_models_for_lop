@@ -6,7 +6,7 @@ Fig B — Top-k eigenvalue evolution over time  (one panel per condition)
 Fig C — Eigenvalue spectrum at each 2k-step snapshot  (heatmap: step × eigenmode)
 Fig D — Residual alignment over time: task A (0°) vs task B (270°)
 
-Run with:  uv run python notebooks/plot_ntk_over_time.py
+Run with:  uv run python visualization_scripts/toy_models/plot_ntk_over_time.py
 """
 import json, os
 import numpy as np
@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-RESULTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 NTK_DIR = os.path.join(RESULTS, "ntk")
 OUT_DIR = NTK_DIR
 

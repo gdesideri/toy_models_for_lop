@@ -12,7 +12,7 @@ One summary figure is produced across all conditions:
 
   figC_lop.png    — LoP gap: steps sweep (mean±std) + per-seed bars at steps=2000
 
-Run with:  uv run python notebooks/plot_rotating_target.py
+Run with:  uv run python visualization_scripts/toy_models/plot_rotating_target.py
 """
 import json, os, math
 import numpy as np
@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines  as mlines
 
-RESULTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 
 def load(name):
     with open(os.path.join(RESULTS, f"{name}.json")) as f:

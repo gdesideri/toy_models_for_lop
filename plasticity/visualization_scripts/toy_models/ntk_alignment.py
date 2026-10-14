@@ -23,18 +23,18 @@ EIGS_FILE : eigendecomposition JSON (from ntk_eigenvalues.py)
 NTK_KEY   : which NTK to use: "full", "fc1.weight", "fc2.weight"
 TASK_ANGLE: task direction for computing residuals (may differ from training)
 
-Run with:  uv run python notebooks/ntk_alignment.py
+Run with:  uv run python visualization_scripts/toy_models/ntk_alignment.py
 """
 import json, os, sys, math
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.ntk import residual_alignment
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-RESULTS   = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS   = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 NTK_DIR   = os.path.join(RESULTS, "ntk")
 
 EIGS_FILE  = None     # e.g. "eigs_rotating_target_...json" — None → auto last

@@ -15,4 +15,6 @@ dependencies = [
     "h5py>=3.11.0",
     "wandb>=0.19.0",
     "requests>=2.32.0",
+    "plotstyle>=1.2.4",
+    "marimo>=0.25.0",
 ]

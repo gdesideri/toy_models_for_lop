@@ -29,7 +29,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from src.benchmark import make_rng
+from tasks.toy_regression import make_rng
+from models.factory import build_model
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -54,20 +55,12 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # ── Network ───────────────────────────────────────────────────────────────────
 
-class Net(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(K, HIDDEN, bias=False)
-        self.fc2 = nn.Linear(HIDDEN, 1,  bias=False)
-        nn.init.kaiming_uniform_(self.fc1.weight, nonlinearity="relu")
-        nn.init.kaiming_uniform_(self.fc2.weight, nonlinearity="relu")
-
-    def forward(self, x):
-        return self.fc2(torch.relu(self.fc1(x))).squeeze(-1)
-
-
 def fresh_net():
-    return Net()
+    # "minimal" is K -> HIDDEN=4 ReLU -> 1, bias-free, kaiming init: the same
+    # network this script used to define inline. Note it draws its init in a
+    # different RNG order, so a given seed yields different starting weights
+    # than runs made before the model moved into models/factory.py.
+    return build_model("minimal", K)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

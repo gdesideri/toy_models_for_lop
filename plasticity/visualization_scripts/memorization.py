@@ -11,15 +11,9 @@ import json
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import matplotlib.pyplot as plt
 
-from visualization_scripts.common import (
-    set_style, plot_learning_curves, plot_bar, smooth, steps_and_values,
-    add_task_switch_vlines, PALETTE,
-)
-
-RESULTS_DIR = Path(__file__).parent.parent / "results" / "memorization"
+from visualization_scripts.common import set_style, plot_learning_curves, smooth, steps_and_values, PALETTE
 
 
 # ── Individual plot functions ──────────────────────────────────────────────────
@@ -40,12 +34,6 @@ def plot_overwrite_retention(
     steps_c, acc_changed  = steps_and_values(log, "current_label_acc_changed")
     steps_u, retention    = steps_and_values(log, "unchanged_retention")
     steps_p, prev_rate    = steps_and_values(log, "previous_label_pred_rate")
-
-    # detect change events from log
-    event_steps = [e["step"] for e in log if e.get("n_change_events", 0) > (
-        log[max(0, i-1)].get("n_change_events", 0)
-        if i > 0 else 0
-    ) for i, e in enumerate(log)]
 
     ax1.plot(steps_c, smooth(acc_changed, smooth_win),
              color=PALETTE[0], label="changed subset (current label)")

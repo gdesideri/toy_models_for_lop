@@ -6,7 +6,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from src.benchmark import Task, make_rng  # noqa: F401
+from tasks.toy_regression import Task, make_rng  # noqa: F401
 
 
 # ── Loss ──────────────────────────────────────────────────────────────────────

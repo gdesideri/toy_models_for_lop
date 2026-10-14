@@ -14,14 +14,14 @@ Config
 ──────
 Set EXPERIMENT, CONDITION, SNAPSHOT_STEP and TASK_ANGLE below.
 
-Run with:  uv run python notebooks/compute_ntk.py
+Run with:  uv run python visualization_scripts/toy_models/compute_ntk.py
 """
 import json, os, sys, math
 import torch
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from src.models import MinimalNet
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from models.toy import MinimalNet
 from src.ntk    import (compute_ntk, compute_ntk_per_layer,
                          compute_jacobian, compute_jacobian_per_layer)
 
@@ -38,7 +38,7 @@ N_SAMPLES   = 128
 TASK_ANGLE  = 0        # degrees — which task's target direction to use for residuals
 K           = 2        # input dimension (fixed for all our experiments)
 
-RESULTS     = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS     = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 OUT_DIR     = os.path.join(RESULTS, "ntk")
 os.makedirs(OUT_DIR, exist_ok=True)
 

@@ -10,6 +10,7 @@ models/factory.py — Central factory for models and optimizers.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import torch
@@ -18,6 +19,7 @@ import torch.optim as optim
 
 from models.mlp import MLP, MLP_CONFIGS
 from models.cnn import CNN
+from models.toy import MinimalNet, ShallowNet, DeepNet, LinearNet
 
 
 # ── Model factory ─────────────────────────────────────────────────────────────
@@ -30,12 +32,14 @@ def build_model(
     n_classes: int = 10,
     activation: str = "relu",
     use_layer_norm: bool = False,
+    bias: bool = True,
     **kwargs: Any,
 ) -> nn.Module:
     """
-    Build a model by name.
+    Build a model by name. The single entry point for every network in the repo.
 
-    MLP archs (require d_in):
+    MLP archs (require d_in) — any "mlp_<n_layers>x<width>" name works,
+    e.g. "mlp_2x100"; the named presets are:
         "mlp_2x512"   — 2 hidden layers, width 512
         "mlp_2x1024"  — 2 hidden layers, width 1024
         "mlp_3x256"   — 3 hidden layers, width 256
@@ -45,23 +49,41 @@ def build_model(
     CNN arch (requires in_channels and input_size):
         "cnn"         — 4 conv (32ch) + 2 FC (256)
 
+    Toy archs (require d_in; single scalar output, n_classes is ignored):
+        "minimal"     — 1 hidden layer of 4, bias-free (bias is forced off)
+        "minimal_2"   — 1 hidden layer of 2, bias-free
+        "minimal_8"   — 1 hidden layer of 8, bias-free
+        "shallow_<h>" — 1 hidden layer of width h
+        "deep_<h>"    — 4 hidden layers of width h
+        "linear"      — a single linear layer
+
     Common kwargs forwarded to the constructor:
         activation    — "relu" | "gelu" | "leaky_relu"  (default "relu")
         use_layer_norm — bool (default False)
         n_classes     — int (default 10)
+        bias          — bool (default True; MLP and toy archs)
     """
     arch_lower = arch.lower()
 
+    hidden_sizes = None
     if arch_lower in MLP_CONFIGS:
+        hidden_sizes = MLP_CONFIGS[arch_lower]["hidden_sizes"]
+    else:
+        # any "mlp_<n_layers>x<width>" name, e.g. "mlp_2x100"
+        m = re.fullmatch(r"mlp_(\d+)x(\d+)", arch_lower)
+        if m:
+            hidden_sizes = [int(m.group(2))] * int(m.group(1))
+
+    if hidden_sizes is not None:
         if d_in is None:
             raise ValueError(f"MLP arch '{arch}' requires d_in (flattened input size).")
-        cfg = MLP_CONFIGS[arch_lower]
         return MLP(
             d_in=d_in,
             n_classes=n_classes,
-            hidden_sizes=cfg["hidden_sizes"],
+            hidden_sizes=hidden_sizes,
             activation=activation,
             use_layer_norm=use_layer_norm,
+            bias=bias,
             **kwargs,
         )
 
@@ -77,16 +99,59 @@ def build_model(
             **kwargs,
         )
 
+    toy = _build_toy(arch_lower, d_in, bias)
+    if toy is not None:
+        return toy
+
     raise ValueError(
-        f"Unknown arch '{arch}'. Available: {list(MLP_CONFIGS.keys()) + ['cnn']}"
+        f"Unknown arch '{arch}'. Available: {ARCHS}, "
+        "or any 'mlp_<n_layers>x<width>', 'shallow_<h>' or 'deep_<h>' name."
     )
+
+
+def _build_toy(arch: str, d_in: int | None, bias: bool) -> nn.Module | None:
+    """The scalar-output toy networks of models/toy.py, or None if `arch` is not one."""
+    fixed = {"minimal": 4, "minimal_2": 2, "minimal_8": 8}
+    is_toy = (arch in fixed or arch == "linear"
+              or re.fullmatch(r"(shallow|deep)_\d+", arch) is not None)
+    if not is_toy:
+        return None
+    if d_in is None:
+        raise ValueError(f"Toy arch '{arch}' requires d_in.")
+
+    if arch in fixed:
+        return MinimalNet(d_in, hidden=fixed[arch], bias=False)   # bias-free for geometric tests
+    if arch.startswith("shallow_"):
+        return ShallowNet(d_in, hidden=int(arch.split("_")[1]), bias=bias)
+    if arch.startswith("deep_"):
+        return DeepNet(d_in, hidden=int(arch.split("_")[1]), bias=bias)
+    return LinearNet(d_in, bias=bias)
+
+
+# ── Head utilities ────────────────────────────────────────────────────────────
+
+def reset_head(model: nn.Module, activation: str = "relu") -> nn.Module:
+    """Re-draws `model.head` with the init every classifier here uses (kaiming, zero bias)."""
+    nonlinearity = "leaky_relu" if "leaky" in activation else "relu"
+    nn.init.kaiming_uniform_(model.head.weight, nonlinearity=nonlinearity)
+    if model.head.bias is not None:
+        nn.init.zeros_(model.head.bias)
+    return model
+
+
+def freeze_body(model: nn.Module) -> nn.Module:
+    """Freezes every parameter except those of `model.head`."""
+    head = {id(p) for p in model.head.parameters()}
+    for p in model.parameters():
+        p.requires_grad_(id(p) in head)
+    return model
 
 
 # ── Optimizer factory ─────────────────────────────────────────────────────────
 
 def build_optimizer(
     model: nn.Module,
-    optimizer: str,
+    optimizer: str = "sgd",
     lr: float = 1e-3,
     **kwargs: Any,
 ) -> torch.optim.Optimizer:
@@ -95,7 +160,7 @@ def build_optimizer(
 
     Args:
         model:     The network whose parameters will be optimized.
-        optimizer: "adam" | "sgd".
+        optimizer: "sgd" (default, momentum 0) | "adam".
                    Note: EWC is a regularizer, not an optimizer — import
                    models.ewc.EWC directly and add its penalty to the loss.
         lr:        Learning rate.
@@ -132,7 +197,8 @@ def build_optimizer(
 
 ACTIVATIONS = ("relu", "gelu", "leaky_relu")
 OPTIMIZERS  = ("adam", "sgd")
-ARCHS       = list(MLP_CONFIGS.keys()) + ["cnn"]
+ARCHS       = list(MLP_CONFIGS.keys()) + ["cnn", "minimal", "minimal_2", "minimal_8",
+                                         "shallow_<h>", "deep_<h>", "linear"]
 
 
 def list_archs() -> list[str]:

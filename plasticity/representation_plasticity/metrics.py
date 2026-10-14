@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from representation_plasticity.stream import (
+from tasks.feature_streams import (
     Shapes3DDataset, Task, TaskDataset, interventional_relevance,
     task_similarity_feature, task_similarity_label, FACTOR_NAMES,
 )

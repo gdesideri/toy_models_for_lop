@@ -10,14 +10,14 @@ For each condition (ntest2000, ntest5000, ntest7000) and each seed:
 
 Saves to: results/ntk/ntk_over_time.json
 
-Run with:  uv run python notebooks/compute_ntk_over_time.py
+Run with:  uv run python visualization_scripts/toy_models/compute_ntk_over_time.py
 """
 import json, os, sys, math, time
 import torch
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from src.models import MinimalNet
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from models.toy import MinimalNet
 from src.ntk    import (compute_ntk, compute_ntk_per_layer,
                          ntk_eigendecomposition, residual_alignment)
 
@@ -31,7 +31,7 @@ K_DIM         = 2
 W0 = torch.tensor([ 1.0,  0.0])   # task A direction (align phase)
 W3 = torch.tensor([ 0.0, -1.0])   # task B direction (test phase, 270°)
 
-RESULTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 NTK_DIR = os.path.join(RESULTS, "ntk")
 os.makedirs(NTK_DIR, exist_ok=True)
 

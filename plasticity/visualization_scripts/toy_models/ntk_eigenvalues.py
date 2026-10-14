@@ -12,18 +12,18 @@ Config
 ──────
 Set NTK_FILE to the path of the NTK JSON produced by compute_ntk.py.
 
-Run with:  uv run python notebooks/ntk_eigenvalues.py
+Run with:  uv run python visualization_scripts/toy_models/ntk_eigenvalues.py
 """
 import json, os, sys
 import numpy as np
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.ntk import ntk_eigendecomposition
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-RESULTS  = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+RESULTS  = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "results")
 NTK_DIR  = os.path.join(RESULTS, "ntk")
 
 # Set this to the filename produced by compute_ntk.py (without path)

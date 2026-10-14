@@ -15,11 +15,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from visualization_scripts.common import (
-    set_style, plot_learning_curves, plot_heatmap, plot_bar,
-    smooth, steps_and_values, add_task_switch_vlines, PALETTE,
+    set_style, plot_heatmap, smooth, steps_and_values, add_task_switch_vlines, PALETTE,
 )
-
-RESULTS_DIR = Path(__file__).parent.parent / "results" / "representation"
 
 
 # ── Relevance heatmap ─────────────────────────────────────────────────────────
