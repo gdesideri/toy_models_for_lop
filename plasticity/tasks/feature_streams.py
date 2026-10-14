@@ -498,17 +498,19 @@ class FeatureParityTask(Task):
     is the XNOR of their parities) and stays balanced as long as one of them has
     an even number of values -- every Shapes3D factor but azimuth (15) does.
 
-    Works on the latent indices of data.download.Shapes3DImageDataset:
+    Works on the latent indices of data.download.Shapes3DImageDataset, or of any dataset
+    with a latent_idx array (data.pca_factors.PCAFactorDataset):
         task = FeatureParityTask([4])            # object-type parity
         train_task = task.apply(train_set)       # same images, this task's labels
     """
 
     def __init__(self, factors):
         factors = [int(f) for f in factors]
-        if not factors or len(set(factors)) != len(factors) or not all(0 <= f < N_FACTORS for f in factors):
-            raise ValueError(f"factors must be distinct Shapes3D factor indices 0-{N_FACTORS - 1}, got {factors}")
+        if not factors or len(set(factors)) != len(factors) or min(factors) < 0:
+            raise ValueError(f"factors must be distinct non-negative factor indices, got {factors}")
+        names = [FACTOR_NAMES[f] if f < N_FACTORS else str(f) for f in factors]
         super().__init__(relevant_factors=factors, label_fn=self._label,
-                         name="parity(" + "+".join(FACTOR_NAMES[f] for f in factors) + ")", n_classes=2)
+                         name="parity(" + "+".join(names) + ")", n_classes=2)
 
     def _label(self, latent_idx: np.ndarray) -> int:
         return int(sum(int(latent_idx[f]) for f in self.relevant_factors) % 2 == 0)
@@ -519,6 +521,9 @@ class FeatureParityTask(Task):
 
     def apply(self, dataset) -> "TaskLabels":
         """`dataset` (anything with .latent_idx) relabelled by this task; images are shared."""
+        n_factors = np.asarray(dataset.latent_idx).shape[1]
+        if max(self.relevant_factors) >= n_factors:
+            raise ValueError(f"factors {self.relevant_factors}: the dataset has factors 0-{n_factors - 1}")
         return TaskLabels(dataset, self.labels(dataset.latent_idx), self.n_classes)
 
 
