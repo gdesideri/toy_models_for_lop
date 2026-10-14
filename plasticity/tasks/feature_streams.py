@@ -516,7 +516,7 @@ class FeatureParityTask(Task):
         return int(sum(int(latent_idx[f]) for f in self.relevant_factors) % 2 == 0)
 
     def labels(self, latent_idx: np.ndarray) -> np.ndarray:
-        """Vectorised labels for an (N, 6) array of latent indices."""
+        """Vectorised labels for an (N, F) array of latent indices."""
         return (np.asarray(latent_idx)[:, self.relevant_factors].sum(axis=1) % 2 == 0).astype(np.int64)
 
     def apply(self, dataset) -> "TaskLabels":

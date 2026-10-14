@@ -2,18 +2,26 @@
 experiments/run_tasks_stream.py — One network trained on a stream of tasks, each
 task starting from the weights the previous one ended with.
 
-A task is a label and a pixel permutation of the dataset. Two families:
+A task is a label and a pixel permutation of the dataset. Three families:
     permuted pixels : a fresh permutation per task (--perm_percentage, default 100%),
                       the label fixed by --target_factor and --label_rule
     feature switches: --perm_percentage 0 --task_factors 0 1 2 3 4 5 --label_rule parity,
                       task n labelled by the parity of Shapes3D factor task_factors[n]
+    PCA factors     : --perm_percentage 0 --pca_bins K [--pca_components n], on any dataset (mnist,
+                      cifar10, ...): task n labelled by the parity of the image's bin on principal
+                      component task_factors[n] (default: every component 0..n-1, n = 6), each
+                      component of the raw train pixels cut into K equal-count bins (K even;
+                      data/pca_factors.py)
 Optimizer defaults to plain SGD, momentum 0.
 
 Run with:
     uv run python -m experiments.run_tasks_stream --dataset_kind shapes3d --target_factor 5 \
         --label_rule parity --model_kind mlp_2x30 --n_tasks 10 --num_epochs 10 --batch_size 256
+    uv run python -m experiments.run_tasks_stream --dataset_kind mnist --perm_percentage 0 --pca_bins 8 \
+        --model_kind mlp_2x30 --n_tasks 60 --num_epochs 10 --batch_size 256
 
-Writes results/<save_dir>/stream_<dataset>_<model>_perm<p>_<label>_seed<k>/:
+Writes results/<save_dir>/stream_<dataset>_<model>_perm<p>_<label>_seed<k>/
+(PCA runs: stream_<dataset>_<model>_perm000_pca<n>_bins<K>_seed<k>/):
     args.json, summary.json        the settings; final metrics of every task so far
     checkpoints/init.pt            the network before the first task
     task_<n>/                      history.json (per-step loss, per-epoch train loss / train acc /

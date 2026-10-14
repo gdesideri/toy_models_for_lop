@@ -327,8 +327,9 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
     parser.add_argument('--snapshot_every', type=int, default=1,
                         help='Save a checkpoint every this many epochs within each task')
     parser.add_argument('--task_factors', type=int, nargs='+', default=None,
-                        help='Shapes3D only: task n is labelled by factor task_factors[n %% len] '
-                             '(relabelled with --label_rule); default: every task uses --target_factor')
+                        help='Task n is labelled by factor task_factors[n %% len] (relabelled with --label_rule): '
+                             'a Shapes3D factor, or with --pca_bins a principal component; default: '
+                             'every task uses --target_factor (with --pca_bins: every component)')
     parser.add_argument('--features_per_task', type=int, default=1,
                         help='With --task_factors: task n is labelled by the parity of task_factors[n], ...,'
                              ' task_factors[n + k - 1] (k = 2: each switch swaps one of the two features)')

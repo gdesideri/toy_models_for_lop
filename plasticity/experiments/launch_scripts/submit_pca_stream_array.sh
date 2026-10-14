@@ -86,8 +86,8 @@ SEED="${SEEDS[$(( I % ${#SEEDS[@]} ))]}"
 
 OPTIMIZER="${OPTIMIZER:-sgd}"            # plain SGD, momentum 0 (build_optimizer default)
 PCA_COMPONENTS="${PCA_COMPONENTS:-6}"
-RUN_TAG="${RUN_TAG:-${DATASET}_pca_stream_$OPTIMIZER}"
 MODEL_KIND="${MODEL_KIND:-mlp_2x30}"
+RUN_TAG="${RUN_TAG:-${DATASET}_pca_stream_${MODEL_KIND}_$OPTIMIZER}"
 N_TASKS="${N_TASKS:-60}"                 # 10 passes over the 6 components
 EPOCHS="${EPOCHS:-10}"
 SNAPSHOT_EVERY="${SNAPSHOT_EVERY:-5}"
@@ -102,7 +102,7 @@ mkdir -p "$OUTDIR"
 # tasks already completed for this (K, seed) (0 for a fresh run)
 _done() {
     local s
-    s=$(ls "$OUTDIR"/stream_*_pca"$PCA_COMPONENTS"_bins"$K"_seed"$SEED"/summary.json 2>/dev/null | head -1)
+    s=$(ls "$OUTDIR"/stream_*_"$MODEL_KIND"_perm*_pca"$PCA_COMPONENTS"_bins"$K"_seed"$SEED"/summary.json 2>/dev/null | head -1)
     [[ -n "$s" ]] && "$UV" run --no-sync python -c \
         "import json,sys; print(len(json.load(open(sys.argv[1]))['tasks']))" "$s" || echo 0
 }
