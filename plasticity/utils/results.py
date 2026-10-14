@@ -27,8 +27,14 @@ def run_dir_for(params, prefix: str = "") -> Path:
     """
     label = ""
     factors = getattr(params, "task_factors", None)
+    pca_bins = getattr(params, "pca_bins", None)
     t1, t2 = getattr(params, "task1_factors", None), getattr(params, "task2_factors", None)
-    if params.dataset_kind == "shapes3d" and t1:
+    if pca_bins:
+        n = params.pca_components
+        label = f"_pca{n}_bins{pca_bins}"
+        if factors and list(factors) != list(range(n)):
+            label += "_features" + "-".join(str(f) for f in factors)
+    elif params.dataset_kind == "shapes3d" and t1:
         label = f"_set{''.join(map(str, t1))}_to_set{''.join(map(str, t2))}_{getattr(params, 'set_rule', 'parity')}"
     elif params.dataset_kind == "shapes3d" and factors:
         label = "_features" + "".join(str(f) for f in factors)

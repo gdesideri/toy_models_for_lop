@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.args import parse_tasks_stream_args
 from data.factory import build_dataset, build_loaders, dataset_spec
 from data.download import SHAPES3D_FACTOR_NAMES
+from data.pca_factors import pca_cache_path, with_pca_factors
 from tasks.feature_streams import FeatureParityTask
 from tasks.permuted_pixels import sample_pixel_permutation, permute_dataset
 from models.factory import build_model
@@ -50,8 +51,33 @@ from utils.results import run_dir_for, save_results, save_summary
 from experiments.run_basic_task_training import train
 
 
+RESUME_KEYS = ("dataset_kind", "n_samples", "target_factor", "label_rule", "perm_percentage",
+               "model_kind", "optimizer", "learning_rate", "batch_size", "num_epochs", "seed",
+               "task_factors", "features_per_task", "keep_features", "pca_components", "pca_bins")
+# the value a run saved before an argument existed had, implicitly
+RESUME_DEFAULTS = {"features_per_task": 1, "pca_components": 6}
+
+
+def changed_args(saved, params):
+    """The settings in which `params` differ from a saved run's args.json."""
+    return [k for k in RESUME_KEYS if saved.get(k, RESUME_DEFAULTS.get(k)) != getattr(params, k)]
+
+
+def resolve_task_factors(params):
+    """With --pca_bins: the task factors, every component by default, checked to exist."""
+    if not params.pca_bins:
+        return params.task_factors
+    factors = params.task_factors or list(range(params.pca_components))
+    missing = [f for f in factors if not 0 <= f < params.pca_components]
+    if missing:
+        raise SystemExit(f"--task_factors {missing}: only components 0-{params.pca_components - 1} exist "
+                         f"(--pca_components {params.pca_components})")
+    return factors
+
+
 if __name__ == "__main__":
     params = parse_tasks_stream_args()
+    params.task_factors = resolve_task_factors(params)
     rng = np.random.default_rng(params.seed)
     torch.manual_seed(params.seed)
 
@@ -60,6 +86,14 @@ if __name__ == "__main__":
                                         target_factor=params.target_factor, rng=rng,
                                         label_rule=params.label_rule)
     (c, h, w), n_classes = dataset_spec(train_set)
+    if params.pca_bins:
+        # Shapes3D's split depends on the seed, so only fixed-split datasets are cached
+        cache = None if params.dataset_kind == "shapes3d" else \
+            pca_cache_path(params.dataset_kind, params.pca_components, params.pca_bins)
+        train_set, test_set = with_pca_factors(train_set, test_set, params.pca_components,
+                                               params.pca_bins, cache_path=cache)
+        n_classes = 2
+    factor_names = getattr(train_set, "factor_names", SHAPES3D_FACTOR_NAMES)
 
     if params.features_per_task != 1:
         raise SystemExit("--features_per_task: only 1 feature per task is supported")
@@ -70,17 +104,14 @@ if __name__ == "__main__":
             return None
         return FeatureParityTask([params.task_factors[n % len(params.task_factors)]])
 
-    if params.task_factors and (params.label_rule != "parity" or n_classes != 2):
+    if params.task_factors and not params.pca_bins and (params.label_rule != "parity" or n_classes != 2):
         raise SystemExit("--task_factors: the feature tasks are parity tasks (2 classes, the head "
                          "carries over); pass --label_rule parity")
     run_dir = run_dir_for(params, prefix="stream_")
     stream = []
     if params.resume and (run_dir / "summary.json").exists():
         saved = json.load(open(run_dir / "args.json"))
-        changed = [k for k in ("dataset_kind", "n_samples", "target_factor", "label_rule", "perm_percentage",
-                               "model_kind", "optimizer", "learning_rate", "batch_size", "num_epochs", "seed",
-                               "task_factors", "features_per_task", "keep_features")
-                   if saved.get(k, 1 if k == "features_per_task" else None) != getattr(params, k)]
+        changed = changed_args(saved, params)
         if changed:
             raise SystemExit(f"--resume: {run_dir} was run with different {changed}")
         stream = json.load(open(run_dir / "summary.json"))["tasks"]
@@ -135,11 +166,13 @@ if __name__ == "__main__":
                                 torch_rng_state=torch.get_rng_state())
 
         print(f"── task {n + 1}/{params.n_tasks}  (label: "
-              f"{'+'.join(SHAPES3D_FACTOR_NAMES[f] for f in factors)} parity)" if task else
+              f"{'+'.join(factor_names[f] for f in factors)} parity)" if task else
               f"── task {n + 1}/{params.n_tasks}")
         history = train(model, *loaders, params, on_epoch_end=snapshot)
         # model.pt would duplicate the last-epoch snapshot
         labels = {"factors": factors, **({"target_factor": factors[0]} if len(factors) == 1 else {})}
+        if params.pca_bins:
+            labels["explained_variance"] = [float(train_set.explained_variance[f]) for f in factors]
         save_results(task_dir, params, history, model, perm, {**extra, "task": n, **labels},
                      save_model=False)
         stream.append({"task": n, **labels,

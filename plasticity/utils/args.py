@@ -334,6 +334,13 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
                              ' task_factors[n + k - 1] (k = 2: each switch swaps one of the two features)')
     parser.add_argument('--keep_features', type=int, default=None,
                         help='With --features_per_task 3: features kept per switch, 1 or 2 (default 2)')
+    parser.add_argument('--pca_components', type=int, default=6,
+                        help='With --pca_bins: how many principal components of the raw train pixels '
+                             'serve as factors')
+    parser.add_argument('--pca_bins', type=int, default=None,
+                        help='Use the first --pca_components principal components as factors, each cut '
+                             'into this many equal-count bins (even); task n is the parity of its bin on '
+                             'component task_factors[n] (default task_factors: every component)')
     parser.add_argument('--resume', action='store_true',
                         help='Continue an existing run directory after its last completed task')
     parser.add_argument('--deadline_h', type=float, default=None,
