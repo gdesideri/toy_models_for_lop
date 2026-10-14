@@ -18,3 +18,12 @@ dependencies = [
     "plotstyle>=1.2.4",
     "marimo>=0.25.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
