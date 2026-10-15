@@ -1,12 +1,13 @@
 #!/bin/bash
-# Submits every class-attribute / cluster-factor experiment: an mlp_2x30, plain SGD
-# (lr 0.001, batch 256), seeds 0 1 2, through submit_stream_array.sh.
+# Submits every class-attribute / cluster-factor experiment: plain SGD (lr 0.001, batch 256),
+# seeds 0 1 2, through submit_stream_array.sh. The CIFAR-10 runs use an mlp_2x120 (capacity to
+# learn the tasks); the Shapes3D control keeps the mlp_2x30 of the Shapes3D streams.
 #
-#   cifar10_class_stream     5 semantic attributes (animal four_legs fur wings wheels), 600 tasks x 10 epochs
-#   cifar10_class_single     each attribute alone on a fresh network, 10 epochs           (5 x 3 jobs)
-#   cifar10_cluster_stream   6 cluster factors x 8 clusters, 600 tasks x 40 epochs
-#   cifar10_cluster_single   each cluster factor alone on a fresh network, 40 epochs       (6 x 3 jobs)
-#   shapes3d_cluster_stream  control: cluster factors on 50k Shapes3D images, 600 tasks x 40 epochs
+#   cifar10_class_stream     5 semantic attributes (animal four_legs fur wings wheels), 600 tasks x 100 epochs
+#   cifar10_class_single     each attribute alone on a fresh network, 100 epochs          (5 x 3 jobs)
+#   cifar10_cluster_stream   6 cluster factors x 8 clusters, 600 tasks x 100 epochs
+#   cifar10_cluster_single   each cluster factor alone on a fresh network, 100 epochs      (6 x 3 jobs)
+#   shapes3d_cluster_stream  control: cluster factors on 50k Shapes3D images, 600 tasks x 100 epochs
 #
 # Before the first launch, from a login node (cd plasticity):
 #   uv sync
@@ -24,12 +25,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."           # plasticity/
 mkdir -p logs
 SCRIPT=experiments/launch_scripts/submit_stream_array.sh
 ONLY="${ONLY:-cifar10_class_stream cifar10_class_single cifar10_cluster_stream cifar10_cluster_single shapes3d_cluster_stream}"
-COMMON=(MODEL_KIND=mlp_2x30 OPTIMIZER=sgd LR=0.001 BATCH=256 SEEDS="0 1 2")
+COMMON=(OPTIMIZER=sgd LR=0.001 BATCH=256 SEEDS="0 1 2")
 
-submit() {   # submit <name> <array range> <time> VAR=value ...
-    local name="$1" array="$2" time="$3"; shift 3
+submit() {   # submit <name> <array range> <time> <model> VAR=value ...
+    local name="$1" array="$2" time="$3" model="$4"; shift 4
     [[ " $ONLY " == *" $name "* ]] || return 0
-    local cmd=(env "${COMMON[@]}" RUN_TAG="${name}_mlp_2x30" "$@"
+    local cmd=(env "${COMMON[@]}" MODEL_KIND="$model" RUN_TAG="${name}_${model}" "$@"
                sbatch --job-name="$name" --array="$array" --time="$time" "$SCRIPT")
     if [[ -n "${DRY_RUN:-}" ]]; then
         printf '%q ' "${cmd[@]}"; echo
@@ -38,8 +39,8 @@ submit() {   # submit <name> <array range> <time> VAR=value ...
     fi
 }
 
-submit cifar10_class_stream    0-2  24:00:00 MODE=class   DATASET=cifar10 N_TASKS=600 EPOCHS=10
-submit cifar10_class_single    0-14 01:00:00 MODE=class   DATASET=cifar10 SINGLE=1    EPOCHS=10
-submit cifar10_cluster_stream  0-2  24:00:00 MODE=cluster DATASET=cifar10 N_TASKS=600 EPOCHS=40
-submit cifar10_cluster_single  0-17 02:00:00 MODE=cluster DATASET=cifar10 SINGLE=1    EPOCHS=40
-submit shapes3d_cluster_stream 0-2  24:00:00 MODE=cluster DATASET=shapes3d N_SAMPLES=50000 N_TASKS=600 EPOCHS=40
+submit cifar10_class_stream    0-2  24:00:00 mlp_2x120 MODE=class   DATASET=cifar10 N_TASKS=600 EPOCHS=100
+submit cifar10_class_single    0-14 01:00:00 mlp_2x120 MODE=class   DATASET=cifar10 SINGLE=1    EPOCHS=100
+submit cifar10_cluster_stream  0-2  24:00:00 mlp_2x120 MODE=cluster DATASET=cifar10 N_TASKS=600 EPOCHS=100
+submit cifar10_cluster_single  0-17 02:00:00 mlp_2x120 MODE=cluster DATASET=cifar10 SINGLE=1    EPOCHS=100
+submit shapes3d_cluster_stream 0-2  24:00:00 mlp_2x30  MODE=cluster DATASET=shapes3d N_SAMPLES=50000 N_TASKS=600 EPOCHS=100
