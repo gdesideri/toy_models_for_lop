@@ -12,6 +12,12 @@ A task is a label and a pixel permutation of the dataset. Three families:
                       component task_factors[n] (default: every component 0..n-1, n = 6), each
                       component of the raw train pixels cut into K equal-count bins (K even;
                       data/pca_factors.py)
+    cluster factors : --perm_percentage 0 --cluster_factors F [--clusters C --cluster_dims D], on any
+                      dataset: F categorical factors, each a k-means clustering (C clusters) of the
+                      train images' first D pixel-PCA coordinates, fitted so that each factor is
+                      non-redundant with the earlier ones; task n is labelled by the parity of the
+                      image's cluster id on factor task_factors[n] (default: every factor; ids are
+                      renumbered so the parity classes are about balanced; data/cluster_factors.py)
 Optimizer defaults to plain SGD, momentum 0.
 
 Run with:
@@ -20,8 +26,12 @@ Run with:
     uv run python -m experiments.run_tasks_stream --dataset_kind mnist --perm_percentage 0 --pca_bins 8 \
         --model_kind mlp_2x30 --n_tasks 60 --num_epochs 10 --batch_size 256
 
+    uv run python -m experiments.run_tasks_stream --dataset_kind mnist --perm_percentage 0 --cluster_factors 6 \
+        --model_kind mlp_2x30 --n_tasks 60 --num_epochs 10 --batch_size 256
+
 Writes results/<save_dir>/stream_<dataset>_<model>_perm<p>_<label>_seed<k>/
-(PCA runs: stream_<dataset>_<model>_perm000_pca<n>_bins<K>_seed<k>/):
+(PCA runs: stream_<dataset>_<model>_perm000_pca<n>_bins<K>_seed<k>/;
+cluster runs: stream_<dataset>_<model>_perm000_clu<F>x<C>_d<D>_seed<k>/):
     args.json, summary.json        the settings; final metrics of every task so far
     checkpoints/init.pt            the network before the first task
     task_<n>/                      history.json (per-step loss, per-epoch train loss / train acc /
@@ -50,6 +60,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.args import parse_tasks_stream_args
 from data.factory import build_dataset, build_loaders, dataset_spec
 from data.download import SHAPES3D_FACTOR_NAMES
+from data.cluster_factors import cluster_cache_path, with_cluster_factors
 from data.pca_factors import pca_cache_path, with_pca_factors
 from tasks.feature_streams import FeatureParityTask
 from tasks.permuted_pixels import sample_pixel_permutation, permute_dataset
@@ -61,9 +72,10 @@ from experiments.run_basic_task_training import train
 
 RESUME_KEYS = ("dataset_kind", "n_samples", "target_factor", "label_rule", "perm_percentage",
                "model_kind", "optimizer", "learning_rate", "batch_size", "num_epochs", "seed",
-               "task_factors", "features_per_task", "keep_features", "pca_components", "pca_bins")
+               "task_factors", "features_per_task", "keep_features", "pca_components", "pca_bins",
+               "cluster_factors", "clusters", "cluster_dims")
 # the value a run saved before an argument existed had, implicitly
-RESUME_DEFAULTS = {"features_per_task": 1, "pca_components": 6}
+RESUME_DEFAULTS = {"features_per_task": 1, "pca_components": 6, "clusters": 8, "cluster_dims": 50}
 
 
 def changed_args(saved, params):
@@ -72,14 +84,20 @@ def changed_args(saved, params):
 
 
 def resolve_task_factors(params):
-    """With --pca_bins: the task factors, every component by default, checked to exist."""
-    if not params.pca_bins:
+    """With --pca_bins or --cluster_factors: the task factors, every one by default, checked to exist."""
+    if params.cluster_factors and params.pca_bins:
+        raise SystemExit("--cluster_factors and --pca_bins are different factor sources; pass only one")
+    if not (params.pca_bins or params.cluster_factors):
         return params.task_factors
-    factors = params.task_factors or list(range(params.pca_components))
-    missing = [f for f in factors if not 0 <= f < params.pca_components]
+    n_factors = params.cluster_factors or params.pca_components
+    factors = params.task_factors or list(range(n_factors))
+    missing = [f for f in factors if not 0 <= f < n_factors]
+    if missing and params.cluster_factors:
+        raise SystemExit(f"--task_factors {missing}: only factors 0-{n_factors - 1} exist "
+                         f"(--cluster_factors {n_factors})")
     if missing:
-        raise SystemExit(f"--task_factors {missing}: only components 0-{params.pca_components - 1} exist "
-                         f"(--pca_components {params.pca_components})")
+        raise SystemExit(f"--task_factors {missing}: only components 0-{n_factors - 1} exist "
+                         f"(--pca_components {n_factors})")
     return factors
 
 
@@ -101,6 +119,16 @@ if __name__ == "__main__":
         train_set, test_set = with_pca_factors(train_set, test_set, params.pca_components,
                                                params.pca_bins, cache_path=cache)
         n_classes = 2
+    if params.cluster_factors:
+        cache = None if params.dataset_kind == "shapes3d" else \
+            cluster_cache_path(params.dataset_kind, params.cluster_factors, params.clusters,
+                               params.cluster_dims)
+        train_set, test_set = with_cluster_factors(train_set, test_set, params.cluster_factors,
+                                                   params.clusters, params.cluster_dims, cache_path=cache)
+        n_classes = 2
+        off_diagonal = train_set.factor_nmi[~np.eye(params.cluster_factors, dtype=bool)]
+        print(f"cluster factors: class balance {np.round(train_set.class_balance, 3).tolist()}, "
+              f"max off-diagonal NMI {off_diagonal.max() if off_diagonal.size else 0.0:.3f}")
     factor_names = getattr(train_set, "factor_names", SHAPES3D_FACTOR_NAMES)
 
     if params.features_per_task != 1:
@@ -112,7 +140,7 @@ if __name__ == "__main__":
             return None
         return FeatureParityTask([params.task_factors[n % len(params.task_factors)]])
 
-    if params.task_factors and not params.pca_bins and (params.label_rule != "parity" or n_classes != 2):
+    if params.task_factors and not (params.pca_bins or params.cluster_factors) and (params.label_rule != "parity" or n_classes != 2):
         raise SystemExit("--task_factors: the feature tasks are parity tasks (2 classes, the head "
                          "carries over); pass --label_rule parity")
     run_dir = run_dir_for(params, prefix="stream_")
@@ -181,6 +209,8 @@ if __name__ == "__main__":
         labels = {"factors": factors, **({"target_factor": factors[0]} if len(factors) == 1 else {})}
         if params.pca_bins:
             labels["explained_variance"] = [float(train_set.explained_variance[f]) for f in factors]
+        if params.pca_bins or params.cluster_factors:
+            labels["class_balance"] = float(np.mean(base_train.labels))
         save_results(task_dir, params, history, model, perm, {**extra, "task": n, **labels},
                      save_model=False)
         stream.append({"task": n, **labels,

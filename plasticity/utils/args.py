@@ -328,8 +328,9 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
                         help='Save a checkpoint every this many epochs within each task')
     parser.add_argument('--task_factors', type=int, nargs='+', default=None,
                         help='Task n is labelled by factor task_factors[n %% len] (relabelled with --label_rule): '
-                             'a Shapes3D factor, or with --pca_bins a principal component; default: '
-                             'every task uses --target_factor (with --pca_bins: every component)')
+                             'a Shapes3D factor, with --pca_bins a principal component, with --cluster_factors '
+                             'a cluster factor; default: every task uses --target_factor (with '
+                             '--pca_bins or --cluster_factors: every component / factor)')
     parser.add_argument('--features_per_task', type=int, default=1,
                         help='With --task_factors: task n is labelled by the parity of task_factors[n], ...,'
                              ' task_factors[n + k - 1] (k = 2: each switch swaps one of the two features)')
@@ -342,6 +343,15 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
                         help='Use the first --pca_components principal components as factors, each cut '
                              'into this many equal-count bins (even); task n is the parity of its bin on '
                              'component task_factors[n] (default task_factors: every component)')
+    parser.add_argument('--cluster_factors', type=int, default=None,
+                        help='Use this many categorical factors found by non-redundant clustering of the '
+                             'train images in pixel-PCA space (data/cluster_factors.py); task n is the '
+                             'parity of the image\'s cluster id on factor task_factors[n] (default '
+                             'task_factors: every factor)')
+    parser.add_argument('--clusters', type=int, default=8,
+                        help='Clusters per factor (with --cluster_factors)')
+    parser.add_argument('--cluster_dims', type=int, default=50,
+                        help='Pixel-PCA dimensions clustered in (with --cluster_factors)')
     parser.add_argument('--resume', action='store_true',
                         help='Continue an existing run directory after its last completed task')
     parser.add_argument('--deadline_h', type=float, default=None,

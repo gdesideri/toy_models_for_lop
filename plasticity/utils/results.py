@@ -29,7 +29,12 @@ def run_dir_for(params, prefix: str = "") -> Path:
     factors = getattr(params, "task_factors", None)
     pca_bins = getattr(params, "pca_bins", None)
     t1, t2 = getattr(params, "task1_factors", None), getattr(params, "task2_factors", None)
-    if pca_bins:
+    cluster_factors = getattr(params, "cluster_factors", None)
+    if cluster_factors:
+        label = f"_clu{cluster_factors}x{params.clusters}_d{params.cluster_dims}"
+        if factors and list(factors) != list(range(cluster_factors)):
+            label += "_features" + "-".join(str(f) for f in factors)
+    elif pca_bins:
         n = params.pca_components
         label = f"_pca{n}_bins{pca_bins}"
         if factors and list(factors) != list(range(n)):
