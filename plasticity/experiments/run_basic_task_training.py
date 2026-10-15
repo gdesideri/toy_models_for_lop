@@ -23,7 +23,7 @@ from utils.args import parse_basic_task_args
 from data.factory import build_dataset, build_loaders, dataset_spec
 from tasks.permuted_pixels import sample_pixel_permutation, permute_dataset
 from models.factory import build_model, build_optimizer
-from utils.evaluation import evaluate, n_correct
+from utils.evaluation import evaluate, n_correct, positive_counts, precision
 from utils.results import run_dir_for, save_results
 from visualization_scripts.task_training import plot_history, save_sample_images
 
@@ -33,7 +33,8 @@ def train(model, train_loader, test_loader, params, on_epoch_end=None, criterion
     Trains on the sampled task, recording train loss / train acc / test acc over time.
     on_epoch_end(epoch, model), if given, is called after each epoch (e.g. to snapshot).
     criterion defaults to cross entropy; one with an n_correct method also defines
-    the accuracy (utils.evaluation.n_correct).
+    the accuracy (utils.evaluation.n_correct). For a binary task (2 outputs, plain
+    accuracy) the history also records the train / test precision of class 1.
     """
     device = torch.device(params.device)
     model = model.to(device)
@@ -50,6 +51,7 @@ def train(model, train_loader, test_loader, params, on_epoch_end=None, criterion
     for epoch in range(1, params.num_epochs + 1):
         model.train()
         running_loss, correct, n = 0.0, 0, 0
+        true_pos, pred_pos, binary = 0, 0, False
 
         for x, y in train_loader:
             x, y = x.to(device), y.to(device)
@@ -67,9 +69,19 @@ def train(model, train_loader, test_loader, params, on_epoch_end=None, criterion
             running_loss += loss.item() * y.size(0)
             correct += n_correct(logits, y, criterion)
             n += y.size(0)
+            binary = logits.shape[1] == 2 and not hasattr(criterion, "n_correct")
+            if binary:
+                tp, pp = positive_counts(logits, y)
+                true_pos, pred_pos = true_pos + tp, pred_pos + pp
 
         train_loss, train_acc = running_loss / n, correct / n
-        test_loss, test_acc = evaluate(model, test_loader, criterion, device)
+        if binary:
+            test_loss, test_acc, test_prec = evaluate(model, test_loader, criterion, device,
+                                                      with_precision=True)
+            history.setdefault("train_precision", []).append(precision(true_pos, pred_pos))
+            history.setdefault("test_precision", []).append(test_prec)
+        else:
+            test_loss, test_acc = evaluate(model, test_loader, criterion, device)
 
         history["epoch"].append(epoch)
         history["train_loss"].append(train_loss)
@@ -80,6 +92,7 @@ def train(model, train_loader, test_loader, params, on_epoch_end=None, criterion
         print(f"  epoch {epoch:3d}/{params.num_epochs}  "
               f"train_loss {train_loss:.4f}  train_acc {train_acc:.4f}  "
               f"test_loss {test_loss:.4f}  test_acc {test_acc:.4f}  "
+              + (f"test_prec {test_prec:.4f}  " if binary else "") +
               f"({time.time() - t0:.1f}s)")
 
         if on_epoch_end is not None:

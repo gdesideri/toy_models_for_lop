@@ -30,7 +30,13 @@ def run_dir_for(params, prefix: str = "") -> Path:
     pca_bins = getattr(params, "pca_bins", None)
     t1, t2 = getattr(params, "task1_factors", None), getattr(params, "task2_factors", None)
     cluster_factors = getattr(params, "cluster_factors", None)
-    if cluster_factors:
+    class_tasks = getattr(params, "class_tasks", None)
+    if class_tasks:
+        label = "_attrs-" + "-".join(class_tasks)
+        per_label = getattr(params, "per_label", 10_000)
+        if per_label != 10_000:
+            label += f"_n{per_label}"
+    elif cluster_factors:
         label = f"_clu{cluster_factors}x{params.clusters}_d{params.cluster_dims}"
         if factors and list(factors) != list(range(cluster_factors)):
             label += "_features" + "-".join(str(f) for f in factors)
@@ -89,6 +95,9 @@ def save_results(run_dir, params, history, model, task_perm, extra, save_model=T
             "final_test_loss":  history["test_loss"][-1],
             "final_test_acc":   history["test_acc"][-1],
             "best_test_acc":    max(history["test_acc"]),
+            **({"final_train_precision": history["train_precision"][-1],
+                "final_test_precision": history["test_precision"][-1]}
+               if history.get("test_precision") else {}),
         }, f, indent=2)
 
     with open(run_dir / "metrics.csv", "w") as f:

@@ -9,9 +9,11 @@ import torch
 import torch.nn as nn
 
 
-def evaluate(model, loader, criterion, device):
+def evaluate(model, loader, criterion, device, with_precision=False):
+    """(loss, accuracy) over `loader`; (loss, accuracy, precision of class 1) with_precision."""
     model.eval()
     total_loss, correct, n = 0.0, 0, 0
+    true_pos, pred_pos = 0, 0
     with torch.no_grad():
         for x, y in loader:
             x, y = x.to(device), y.to(device)
@@ -19,7 +21,23 @@ def evaluate(model, loader, criterion, device):
             total_loss += criterion(logits, y).item() * y.size(0)
             correct += n_correct(logits, y, criterion)
             n += y.size(0)
+            if with_precision:
+                tp, pp = positive_counts(logits, y)
+                true_pos, pred_pos = true_pos + tp, pred_pos + pp
+    if with_precision:
+        return total_loss / n, correct / n, precision(true_pos, pred_pos)
     return total_loss / n, correct / n
+
+
+def positive_counts(logits, y):
+    """(true positives, predicted positives) of class 1 in a batch, by argmax."""
+    predicted = logits.argmax(dim=1) == 1
+    return (predicted & (y == 1)).sum().item(), predicted.sum().item()
+
+
+def precision(true_pos, pred_pos):
+    """TP / (TP + FP) of class 1; 0 when nothing is predicted positive."""
+    return true_pos / pred_pos if pred_pos else 0.0
 
 
 def n_correct(logits, y, criterion=None):

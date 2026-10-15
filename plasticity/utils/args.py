@@ -352,6 +352,13 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
                         help='Clusters per factor (with --cluster_factors)')
     parser.add_argument('--cluster_dims', type=int, default=50,
                         help='Pixel-PCA dimensions clustered in (with --cluster_factors)')
+    parser.add_argument('--class_tasks', type=str, nargs='+', default=None,
+                        help='Semantic attributes of the classes (tasks/class_attributes.py, e.g. animal '
+                             'four_legs fur wings wheels for cifar10); task n is the binary attribute '
+                             'class_tasks[n %% len], trained on a class-balanced subset')
+    parser.add_argument('--per_label', type=int, default=10_000,
+                        help='With --class_tasks: at most this many images per label (positive / negative) '
+                             'in a task\'s train split; the test split uses as many as are balanced')
     parser.add_argument('--resume', action='store_true',
                         help='Continue an existing run directory after its last completed task')
     parser.add_argument('--deadline_h', type=float, default=None,
