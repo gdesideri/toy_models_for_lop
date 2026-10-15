@@ -153,3 +153,34 @@ def test_mnist_factors_are_balanced():
     assert tr.latent_idx.shape == (60000, 6) and te.latent_idx.shape == (10000, 6)
     for f in range(6):
         assert 0.45 < np.mean(tr.latent_idx[:, f] % 2 == 0) < 0.55
+
+
+def test_cache_hit_and_miss_leave_the_torch_rng_in_the_same_state(tmp_path):
+    train, *_ = make_split(400, 0)
+    test, *_ = make_split(100, 1)
+    path = tmp_path / "c.npz"
+    torch.manual_seed(0)
+    with_cluster_factors(train, test, 2, 4, n_dims=16, cache_path=path)    # miss
+    after_miss = torch.rand(1)
+    torch.manual_seed(0)
+    with_cluster_factors(train, test, 2, 4, n_dims=16, cache_path=path)    # hit
+    assert torch.equal(torch.rand(1), after_miss)
+
+
+@pytest.mark.parametrize("stale", [{"version": -1}, {"n_factors": 1}, {"n_clusters": 2}, {"n_dims": 8},
+                                   {"legacy": True}])
+def test_cache_with_another_version_or_settings_is_refitted(tmp_path, stale):
+    train, *_ = make_split(400, 0)
+    test, *_ = make_split(100, 1)
+    path = tmp_path / "c.npz"
+    tr, _ = with_cluster_factors(train, test, 2, 4, n_dims=16, cache_path=path)
+    fields = dict(version=cluster_factors.CACHE_VERSION, n_factors=2, n_clusters=4, n_dims=16,
+                  train_idx=np.zeros((400, 2), dtype=np.int64), test_idx=np.zeros((100, 2), dtype=np.int64),
+                  factor_nmi=np.zeros((2, 2)), class_balance=np.zeros(2), cluster_sizes=np.zeros((2, 4)))
+    if stale.pop("legacy", False):
+        del fields["version"], fields["n_factors"], fields["n_clusters"], fields["n_dims"]
+    np.savez(path, **{**fields, **stale})
+    tr2, _ = with_cluster_factors(train, test, 2, 4, n_dims=16, cache_path=path)
+    assert np.array_equal(tr2.latent_idx, tr.latent_idx)
+    with np.load(path) as cached:
+        assert cached["version"] == cluster_factors.CACHE_VERSION

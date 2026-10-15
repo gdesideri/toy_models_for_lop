@@ -23,6 +23,8 @@ from torch.utils.data import DataLoader, Dataset
 
 from data.download import DATA_ROOT
 
+CACHE_VERSION = 1       # bump when the fitting changes: older caches are then refitted
+
 
 def _batches(dataset, batch_size=1024):
     """The flattened images of `dataset` in float64, a batch at a time."""
@@ -106,28 +108,34 @@ def with_pca_factors(train, test, n_components, n_bins, cache_path=None):
     """
     (train, test) wrapped in PCAFactorDataset: PCA fitted on `train`, each component
     cut at the train quantiles into `n_bins` bins. With `cache_path`, reuses the bins
-    stored there when their split sizes match, and stores them otherwise.
+    stored there when their version, settings and split sizes match, and stores them otherwise.
     """
     _check_bins(n_bins)
     cache_path = Path(cache_path) if cache_path is not None else None
+    settings = dict(version=CACHE_VERSION, n_components=n_components, n_bins=n_bins)
     if cache_path is not None and cache_path.exists():
-        cached = np.load(cache_path)
-        if len(cached["train_idx"]) == len(train) and len(cached["test_idx"]) == len(test):
-            ratio = cached["explained_variance"]
-            return (PCAFactorDataset(train, cached["train_idx"], ratio, n_bins),
-                    PCAFactorDataset(test, cached["test_idx"], ratio, n_bins))
+        with np.load(cache_path) as cached:
+            files = set(cached.files)
+            if (files >= {*settings, "train_idx", "test_idx", "explained_variance"}
+                    and all(int(cached[k]) == v for k, v in settings.items())):
+                train_idx, test_idx, ratio = (cached["train_idx"], cached["test_idx"],
+                                              cached["explained_variance"])
+                if len(train_idx) == len(train) and len(test_idx) == len(test):
+                    return (PCAFactorDataset(train, train_idx, ratio, n_bins),
+                            PCAFactorDataset(test, test_idx, ratio, n_bins))
 
-    mean, components, ratio = fit_pca(train, n_components)
-    train_proj = project(train, mean, components)
-    edges = bin_edges(train_proj, n_bins)
-    train_idx = assign_bins(train_proj, edges)
-    test_idx = assign_bins(project(test, mean, components), edges)
+    with torch.random.fork_rng(devices=[]):         # the DataLoaders must not advance the caller's RNG
+        mean, components, ratio = fit_pca(train, n_components)
+        train_proj = project(train, mean, components)
+        edges = bin_edges(train_proj, n_bins)
+        train_idx = assign_bins(train_proj, edges)
+        test_idx = assign_bins(project(test, mean, components), edges)
 
     if cache_path is not None:
         # parallel jobs may fill the same cache: write a private file, then rename it
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_path.with_name(f"{cache_path.stem}.{os.getpid()}.tmp.npz")
-        np.savez(tmp, mean=mean, components=components, explained_variance=ratio,
+        np.savez(tmp, **settings, mean=mean, components=components, explained_variance=ratio,
                  edges=edges, train_idx=train_idx, test_idx=test_idx)
         os.replace(tmp, cache_path)
     return (PCAFactorDataset(train, train_idx, ratio, n_bins),

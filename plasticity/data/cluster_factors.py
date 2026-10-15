@@ -20,9 +20,12 @@ import os
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from data.download import DATA_ROOT
 from data.pca_factors import PCAFactorDataset, fit_pca, project
+
+CACHE_VERSION = 1       # bump when the fitting changes: older caches are then refitted
 
 
 def _sq_dists(x, centroids):
@@ -162,19 +165,22 @@ def with_cluster_factors(train, test, n_factors, n_clusters, n_dims=50, cache_pa
     values (ids renumbered for an even/odd balanced split of train). PCA and clustering are fitted
     on `train` with a fixed seed. Both wrappers also carry `factor_nmi` (F, F), `class_balance`
     (F,) (train fraction of even ids) and `cluster_sizes` (F, C) (train counts). With
-    `cache_path`, reuses the factors stored there when their split sizes match.
+    `cache_path`, reuses the factors stored there when their version, settings and split sizes match.
     """
     _check_sizes(n_factors, n_clusters, n_dims)
     cache_path = Path(cache_path) if cache_path is not None else None
+    settings = dict(version=CACHE_VERSION, n_factors=n_factors, n_clusters=n_clusters, n_dims=n_dims)
+    keys = ("train_idx", "test_idx", "factor_nmi", "class_balance", "cluster_sizes")
     if cache_path is not None and cache_path.exists():
-        cached = np.load(cache_path)
-        if len(cached["train_idx"]) == len(train) and len(cached["test_idx"]) == len(test):
-            stats = (cached["factor_nmi"], cached["class_balance"], cached["cluster_sizes"])
-            return (_wrap(train, cached["train_idx"], n_clusters, stats),
-                    _wrap(test, cached["test_idx"], n_clusters, stats))
+        with np.load(cache_path) as cached:
+            if set(cached.files) >= {*settings, *keys} and all(int(cached[k]) == v for k, v in settings.items()):
+                train_idx, test_idx, *stats = (cached[k] for k in keys)
+                if len(train_idx) == len(train) and len(test_idx) == len(test):
+                    return _wrap(train, train_idx, n_clusters, stats), _wrap(test, test_idx, n_clusters, stats)
 
-    mean, components, _ = fit_pca(train, n_dims)
-    train_z, test_z = project(train, mean, components), project(test, mean, components)
+    with torch.random.fork_rng(devices=[]):         # the DataLoaders must not advance the caller's RNG
+        mean, components, _ = fit_pca(train, n_dims)
+        train_z, test_z = project(train, mean, components), project(test, mean, components)
     clusterings = fit_clusterings(train_z, n_factors, n_clusters, seed=0)
     train_idx, test_idx = assign_clusterings(train_z, clusterings), assign_clusterings(test_z, clusterings)
     for f in range(n_factors):
@@ -191,7 +197,7 @@ def with_cluster_factors(train, test, n_factors, n_clusters, n_dims=50, cache_pa
         # parallel jobs may fill the same cache: write a private file, then rename it
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_path.with_name(f"{cache_path.stem}.{os.getpid()}.tmp.npz")
-        np.savez(tmp, train_idx=train_idx, test_idx=test_idx, factor_nmi=factor_nmi,
+        np.savez(tmp, **settings, train_idx=train_idx, test_idx=test_idx, factor_nmi=factor_nmi,
                  class_balance=class_balance, cluster_sizes=cluster_sizes)
         os.replace(tmp, cache_path)
     return _wrap(train, train_idx, n_clusters, stats), _wrap(test, test_idx, n_clusters, stats)

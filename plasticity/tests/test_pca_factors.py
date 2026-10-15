@@ -119,3 +119,30 @@ def test_mnist_end_to_end():
     assert np.all(np.diff(train.explained_variance) < 0)
     # test bins come from the train edges, so test parity is only close to balanced
     assert np.all(np.abs((test.latent_idx % 2 == 0).mean(axis=0) - 0.5) < 0.05)
+
+
+def test_cache_hit_and_miss_leave_the_torch_rng_in_the_same_state(tmp_path):
+    path = tmp_path / "toy.npz"
+    args = (make_split(1000, 0), make_split(200, 1), 3, 8)
+    torch.manual_seed(0)
+    with_pca_factors(*args, cache_path=path)               # miss: fits and projects
+    after_miss = torch.rand(1)
+    torch.manual_seed(0)
+    with_pca_factors(*args, cache_path=path)               # hit
+    assert torch.equal(torch.rand(1), after_miss)
+
+
+@pytest.mark.parametrize("stale", [{"version": -1}, {"n_bins": 4}, {"n_components": 2}, {"legacy": True}])
+def test_cache_with_another_version_or_settings_is_refitted(tmp_path, stale):
+    path = tmp_path / "toy.npz"
+    train, test = with_pca_factors(make_split(1000, 0), make_split(200, 1), 3, 8, cache_path=path)
+    fields = dict(version=pca_factors.CACHE_VERSION, n_components=3, n_bins=8,
+                  explained_variance=np.zeros(3), train_idx=np.zeros((1000, 3), dtype=np.int64),
+                  test_idx=np.zeros((200, 3), dtype=np.int64))
+    if stale.pop("legacy", False):
+        del fields["version"], fields["n_components"], fields["n_bins"]
+    np.savez(path, **{**fields, **stale})
+    train2, test2 = with_pca_factors(make_split(1000, 0), make_split(200, 1), 3, 8, cache_path=path)
+    np.testing.assert_array_equal(train2.latent_idx, train.latent_idx)
+    with np.load(path) as cached:
+        assert cached["version"] == pca_factors.CACHE_VERSION
