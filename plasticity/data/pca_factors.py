@@ -82,11 +82,11 @@ def assign_bins(proj, edges):
 class PCAFactorDataset(Dataset):
     """`dataset` unchanged, plus its PCA bins as Shapes3D-style latent factors."""
 
-    def __init__(self, dataset, latent_idx, explained_variance, n_bins):
+    def __init__(self, dataset, latent_idx, explained_variance, n_bins, factor_names=None):
         self.dataset = dataset
         self.latent_idx = latent_idx
         self.explained_variance = explained_variance
-        self.factor_names = [f"pc{j}" for j in range(latent_idx.shape[1])]
+        self.factor_names = factor_names or [f"pc{j}" for j in range(latent_idx.shape[1])]
         self.factor_n_values = [n_bins] * latent_idx.shape[1]
         self.classes = getattr(dataset, "classes", None)
 
