@@ -134,7 +134,7 @@ def _preactivations(model, x):
 
 def effective_rank(h):
     """exp(entropy of the normalised singular values of h): how many directions the rows of h use."""
-    s = torch.linalg.svdvals(h.detach().double().cpu())
+    s = torch.linalg.svdvals(h.detach().cpu().double())
     p = s / s.sum()
     p = p[p > 0]
     return float(torch.exp(-(p * p.log()).sum()))
@@ -164,7 +164,8 @@ def unit_health(model, batches, probe=None, rare=0.01):
             n += len(xb)
         layers = []
         for c in counts:
-            rate = (c.double() / n).cpu()
+            c = c.cpu()                      # float64 is not available on every device (mps)
+            rate = c.double() / n
             layers.append(dict(units=len(rate), dead=int((c == 0).sum()), rare=int((rate < rare).sum()),
                                median_rate=float(rate.median()), mean_rate=float(rate.mean())))
         out = dict(layers=layers, n_images=n,

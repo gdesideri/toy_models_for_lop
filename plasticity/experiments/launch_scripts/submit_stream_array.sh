@@ -16,6 +16,9 @@
 #
 #   MODE=class   CLASS_TASKS="animal four_legs fur wings wheels"   (tasks/class_attributes.py)
 #   MODE=cluster CLUSTER_FACTORS=6 CLUSTERS=8 CLUSTER_DIMS=50       (data/cluster_factors.py)
+#   MODE=factors TASK_FACTORS="0 1 2 3 4 5"   Shapes3D parity of its true factors (the feature-switch stream)
+#   CENTER=a OFFSET=c   subtract a x the train mean image / add c to every input (data/input_shift.py)
+#   ACTIVATION=relu|leaky_relu|gelu   HEALTH_EVERY=k (unit health after every k-th task; 0 = off)
 #   SINGLE=0  one stream of N_TASKS tasks per seed: array index = seed index
 #   SINGLE=1  a fresh network per task (the stream's tasks one at a time, 1 task each):
 #             array index I -> item ITEMS[I / #seeds], seed SEEDS[I % #seeds]
@@ -75,7 +78,8 @@ read -r -a SEEDS <<< "${SEEDS:-0 1 2}"
 case "$MODE" in
     class)   read -r -a ITEMS <<< "$CLASS_TASKS" ;;
     cluster) read -r -a ITEMS <<< "$(seq -s ' ' 0 $(( CLUSTER_FACTORS - 1 )))" ;;
-    *) echo "ERROR: MODE=$MODE: use class or cluster" >&2; exit 1 ;;
+    factors) read -r -a ITEMS <<< "${TASK_FACTORS:-0 1 2 3 4 5}" ;;
+    *) echo "ERROR: MODE=$MODE: use class, cluster or factors" >&2; exit 1 ;;
 esac
 
 I="${SLURM_ARRAY_TASK_ID:-0}"
@@ -99,6 +103,10 @@ EPOCHS="${EPOCHS:-10}"
 N_TASKS="${N_TASKS:-600}"
 PER_LABEL="${PER_LABEL:-10000}"
 N_SAMPLES="${N_SAMPLES:-}"
+CENTER="${CENTER:-0}"
+OFFSET="${OFFSET:-0}"
+ACTIVATION="${ACTIVATION:-relu}"
+HEALTH_EVERY="${HEALTH_EVERY:-1}"
 DEADLINE_H="${DEADLINE_H:-23.3}"
 WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 WORKERS=$(( WORKERS > 1 ? WORKERS - 1 : 0 ))
@@ -111,6 +119,10 @@ if [[ "$MODE" == class ]]; then
     TASK_ARGS=(--class_tasks $TASKS_NOW --per_label "$PER_LABEL")
     SUFFIX="attrs-${TASKS_NOW// /-}"
     if [[ "$PER_LABEL" != 10000 ]]; then SUFFIX+="_n$PER_LABEL"; fi
+elif [[ "$MODE" == factors ]]; then
+    FACTORS_NOW="${ITEM:-${ITEMS[*]}}"
+    TASK_ARGS=(--task_factors $FACTORS_NOW --label_rule parity --target_factor 5)
+    SUFFIX="features${FACTORS_NOW// /}_parity"
 else
     TASK_ARGS=(--cluster_factors "$CLUSTER_FACTORS" --clusters "$CLUSTERS" --cluster_dims "$CLUSTER_DIMS")
     SUFFIX="clu${CLUSTER_FACTORS}x${CLUSTERS}_d${CLUSTER_DIMS}"
@@ -121,15 +133,20 @@ else
 fi
 [[ "$SINGLE" == 1 ]] && N_TASKS=1
 [[ -n "$N_SAMPLES" ]] && TASK_ARGS+=(--n_samples "$N_SAMPLES")
+# run_dir_for adds the input shift to the name as Python's {:g} prints it; printf %g agrees
+if [[ "$(printf '%g' "$CENTER")" != 0 ]]; then SUFFIX+="_c$(printf '%g' "$CENTER")"; fi
+if [[ "$(printf '%g' "$OFFSET")" != 0 ]]; then SUFFIX+="_off$(printf '%g' "$OFFSET")"; fi
 
 CMD=("$UV" run --no-sync python -u -m experiments.run_tasks_stream
      --dataset_kind "$DATASET" --perm_percentage 0 "${TASK_ARGS[@]}"
-     --model_kind "$MODEL_KIND" --optimizer "$OPTIMIZER" --learning_rate "$LR"
+     --model_kind "$MODEL_KIND" --activation "$ACTIVATION" --optimizer "$OPTIMIZER" --learning_rate "$LR"
+     --center_inputs "$CENTER" --input_offset "$OFFSET" --health_every "$HEALTH_EVERY"
      --num_epochs "$EPOCHS" --batch_size "$BATCH" --n_tasks "$N_TASKS"
      --snapshot_every "$EPOCHS" --num_workers "$WORKERS" --seed "$SEED"
      --save_dir "$OUTDIR" --resume --deadline_h "$DEADLINE_H" "$@")
 if [[ -n "${DRY_RUN:-}" ]]; then
     echo "${CMD[*]}"
+    echo "run directory: $OUTDIR/stream_*_${SUFFIX}_seed$SEED"
     exit 0
 fi
 mkdir -p "$OUTDIR"
@@ -143,7 +160,8 @@ _done() {
 }
 DONE_BEFORE=$(_done)
 echo "array task $I -> mode=$MODE single=$SINGLE item=${ITEM:-all} seed=$SEED dataset=$DATASET" \
-     "model=$MODEL_KIND tasks=$N_TASKS (done: $DONE_BEFORE) epochs=$EPOCHS lr=$LR batch=$BATCH -> $OUTDIR"
+     "model=$MODEL_KIND ($ACTIVATION) tasks=$N_TASKS (done: $DONE_BEFORE) epochs=$EPOCHS lr=$LR batch=$BATCH" \
+     "center=$CENTER offset=$OFFSET -> $OUTDIR"
 
 srun "${CMD[@]}"
 
