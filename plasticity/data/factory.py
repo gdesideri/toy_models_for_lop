@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 
 from data.download import get_dataset, SHAPES3D_FACTOR_N_VALUES
+from data.robot3d import ROBOT3D
 
 
 def binary_target(factor_indices, num_factor_values):
@@ -52,18 +53,20 @@ def build_dataset(
     """
     Returns (train, test) for `kind` (see data.download.list_datasets()).
 
-    n_samples, target_factor, rng and label_rule only apply to shapes3d, which
-    has no canonical split; the other datasets ship their own. label_rule names
-    an entry of LABEL_RULES that relabels the target factor (e.g. "parity").
-    root (cache directory) and normalize (False: images in [0, 1]) are shapes3d-only too.
+    n_samples, target_factor, rng and label_rule only apply to the factor datasets
+    (shapes3d and data/robot3d.py's mpi3d_realistic, isaac3d), which have no canonical
+    split; the other datasets ship their own. label_rule names an entry of LABEL_RULES
+    that relabels the target factor (e.g. "parity"). root (cache directory) and normalize
+    (False: images in [0, 1]) are factor-dataset-only too.
     """
     kwargs = {}
-    if kind == "shapes3d":
+    if kind == "shapes3d" or kind in ROBOT3D:
         kwargs = dict(n_samples=n_samples, target_factor=target_factor, rng=rng,
                       root=root, normalize=normalize)
-        kwargs["label_map"] = _label_map(target_factor, label_rule)
+        n_values = ROBOT3D[kind].factor_n_values if kind in ROBOT3D else SHAPES3D_FACTOR_N_VALUES
+        kwargs["label_map"] = _label_map(target_factor, label_rule, n_values)
     elif label_rule is not None:
-        raise ValueError("label_rule is only supported for shapes3d")
+        raise ValueError("label_rule is only supported for the factor datasets (shapes3d, mpi3d_realistic, isaac3d)")
     out = get_dataset(kind, **kwargs)
     if not (isinstance(out, tuple) and len(out) == 2):
         raise TypeError(f"get_dataset('{kind}') did not return a (train, test) split.")
@@ -80,17 +83,18 @@ def relabel_dataset(dataset, target_factor, label_rule=None):
         return dataset
     if not hasattr(dataset, "relabeled"):
         raise ValueError(f"{type(dataset).__name__} cannot be relabelled by a latent factor")
-    return dataset.relabeled(target_factor, label_map=_label_map(target_factor, label_rule))
+    n_values = getattr(dataset, "factor_n_values", SHAPES3D_FACTOR_N_VALUES)
+    return dataset.relabeled(target_factor, label_map=_label_map(target_factor, label_rule, n_values))
 
 
-def _label_map(target_factor, label_rule):
+def _label_map(target_factor, label_rule, n_values=SHAPES3D_FACTOR_N_VALUES):
     if label_rule is None:
         return None
     if target_factor is None:
         raise ValueError("label_rule needs a target_factor to relabel")
     if label_rule not in LABEL_RULES:
         raise ValueError(f"Unknown label_rule '{label_rule}'. Available: {list(LABEL_RULES)}")
-    return LABEL_RULES[label_rule](SHAPES3D_FACTOR_N_VALUES[target_factor])
+    return LABEL_RULES[label_rule](n_values[target_factor])
 
 
 def dataset_spec(dataset):

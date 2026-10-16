@@ -10,13 +10,17 @@
 #SBATCH --error=logs/%x_%A_%a.err
 #SBATCH --open-mode=append
 
-# run_tasks_stream.py on the class-attribute or cluster-factor tasks, one array task per
-# (item, seed). Submitted by launch_all.sh, which sets the variables and --array; it can
-# also be submitted by hand:
+# run_tasks_stream.py on the class-attribute, cluster-factor, Shapes3D-factor or PCA-factor
+# tasks, one array task per (item, seed). Submitted by launch_all.sh, launch_validation.sh and
+# launch_pca_cosine.sh, which set the variables and --array; it can also be submitted by hand:
 #
 #   MODE=class   CLASS_TASKS="animal four_legs fur wings wheels"   (tasks/class_attributes.py)
 #   MODE=cluster CLUSTER_FACTORS=6 CLUSTERS=8 CLUSTER_DIMS=50       (data/cluster_factors.py)
-#   MODE=factors TASK_FACTORS="0 1 2 3 4 5"   Shapes3D parity of its true factors (the feature-switch stream)
+#   MODE=factors TASK_FACTORS="0 1 2 3 4 5"   Shapes3D parity of its true factors (the feature-switch stream);
+#                also DATASET=mpi3d_realistic (7 factors) or isaac3d (9), every factor by default, the
+#                robot arm's position by a middle threshold instead of parity (data/robot3d.py)
+#   MODE=pca     PCA_COMPONENTS=6 PCA_BINS=10 PCA_SCORE=projection|cosine PCA_RULE=parity|upper_half
+#                                                                   (data/pca_factors.py)
 #   CENTER=a OFFSET=c   subtract a x the train mean image / add c to every input (data/input_shift.py)
 #   ACTIVATION=relu|leaky_relu|gelu   HEALTH_EVERY=k (unit health after every k-th task; 0 = off)
 #   SINGLE=0  one stream of N_TASKS tasks per seed: array index = seed index
@@ -61,25 +65,37 @@ case "$DATASET" in
     mnist)    NEEDED="mnist/MNIST/raw" ;;
     cifar10)  NEEDED="cifar10/cifar-10-batches-py" ;;
     shapes3d) NEEDED="shapes3d/3dshapes.h5" ;;
-    *) echo "ERROR: DATASET=$DATASET: use mnist, cifar10 or shapes3d" >&2; exit 1 ;;
+    mpi3d_realistic|isaac3d) NEEDED="$DATASET/prepared_64px/images.npy" ;;
+    *) echo "ERROR: DATASET=$DATASET: use mnist, cifar10, shapes3d, mpi3d_realistic or isaac3d" >&2; exit 1 ;;
 esac
 [[ -e "${PLASTICITY_DATA_DIR:-$PROJECT_ROOT/data/_cache}/$NEEDED" ]] || {
-    echo "ERROR: $DATASET is not downloaded and GPU nodes cannot download it (see launch_all.sh)." >&2
+    echo "ERROR: $DATASET is not downloaded and GPU nodes cannot download it (see launch_all.sh;" >&2
+    echo "       mpi3d_realistic / isaac3d: uv run python -m data.robot3d prepare, see launch_robot3d.sh)." >&2
     exit 1; }
 
 # ── what to run ───────────────────────────────────────────────────────────────
-MODE="${MODE:?set MODE=class or MODE=cluster}"
+MODE="${MODE:?set MODE=class, cluster, factors or pca}"
 SINGLE="${SINGLE:-0}"
 CLASS_TASKS="${CLASS_TASKS:-animal four_legs fur wings wheels}"
 CLUSTER_FACTORS="${CLUSTER_FACTORS:-6}"
 CLUSTERS="${CLUSTERS:-8}"
 CLUSTER_DIMS="${CLUSTER_DIMS:-50}"
+PCA_COMPONENTS="${PCA_COMPONENTS:-6}"
+PCA_BINS="${PCA_BINS:-10}"
+PCA_SCORE="${PCA_SCORE:-projection}"
+PCA_RULE="${PCA_RULE:-parity}"
 read -r -a SEEDS <<< "${SEEDS:-0 1 2}"
 case "$MODE" in
     class)   read -r -a ITEMS <<< "$CLASS_TASKS" ;;
     cluster) read -r -a ITEMS <<< "$(seq -s ' ' 0 $(( CLUSTER_FACTORS - 1 )))" ;;
-    factors) read -r -a ITEMS <<< "${TASK_FACTORS:-0 1 2 3 4 5}" ;;
-    *) echo "ERROR: MODE=$MODE: use class, cluster or factors" >&2; exit 1 ;;
+    factors) case "$DATASET" in                         # every factor of the dataset by default
+                 mpi3d_realistic) ALL_FACTORS="0 1 2 3 4 5 6" ;;
+                 isaac3d)         ALL_FACTORS="0 1 2 3 4 5 6 7 8" ;;
+                 *)               ALL_FACTORS="0 1 2 3 4 5" ;;
+             esac
+             read -r -a ITEMS <<< "${TASK_FACTORS:-$ALL_FACTORS}" ;;
+    pca)     read -r -a ITEMS <<< "$(seq -s ' ' 0 $(( PCA_COMPONENTS - 1 )))" ;;
+    *) echo "ERROR: MODE=$MODE: use class, cluster, factors or pca" >&2; exit 1 ;;
 esac
 
 I="${SLURM_ARRAY_TASK_ID:-0}"
@@ -123,6 +139,16 @@ elif [[ "$MODE" == factors ]]; then
     FACTORS_NOW="${ITEM:-${ITEMS[*]}}"
     TASK_ARGS=(--task_factors $FACTORS_NOW --label_rule parity --target_factor 5)
     SUFFIX="features${FACTORS_NOW// /}_parity"
+elif [[ "$MODE" == pca ]]; then
+    TASK_ARGS=(--pca_components "$PCA_COMPONENTS" --pca_bins "$PCA_BINS" --pca_score "$PCA_SCORE"
+               --pca_label_rule "$PCA_RULE")
+    SUFFIX="pca${PCA_COMPONENTS}_bins${PCA_BINS}"
+    if [[ "$PCA_SCORE" == cosine ]]; then SUFFIX+="_cos"; fi
+    if [[ "$PCA_RULE" != parity ]]; then SUFFIX+="_$PCA_RULE"; fi
+    if [[ "$SINGLE" == 1 ]]; then
+        TASK_ARGS+=(--task_factors "$ITEM")
+        SUFFIX+="_features$ITEM"
+    fi
 else
     TASK_ARGS=(--cluster_factors "$CLUSTER_FACTORS" --clusters "$CLUSTERS" --cluster_dims "$CLUSTER_DIMS")
     SUFFIX="clu${CLUSTER_FACTORS}x${CLUSTERS}_d${CLUSTER_DIMS}"

@@ -13,6 +13,8 @@ Three stream types:
 Parity tasks, for experiments/run_tasks_stream.py:
     FeatureParityTask          — label = parity of the summed value indices of a feature set
     TwoFeatureParityTask       — the same over exactly two features
+    FeatureUpperHalfTask       — label = value index in the upper half of one ordered feature
+                                 (index >= K/2; on PCA factors: score above the train median)
     FeatureSumTask             — "sum above median": class 1 if the summed scaled feature values
                                  are in the upper half (notes/sum_above_median_labels.md)
 
@@ -532,6 +534,46 @@ class TwoFeatureParityTask(FeatureParityTask):
 
     def __init__(self, f1: int, f2: int):
         super().__init__([f1, f2])
+
+
+class FeatureUpperHalfTask(Task):
+    """
+    Binary task on one ordered feature: label 1 if its value index is in the upper half of
+    the feature's K values, index >= K / 2 (data.factory.binary_target, the Shapes3D
+    `upper_half` label rule: K = 10 -> 0-4 are 0, 5-9 are 1). On PCA factors, whose bins
+    hold equal counts (data/pca_factors.py), this is "score above the train median".
+
+    K is the dataset's factor_n_values[factor] (PCA and cluster factors), else the number
+    of values of that Shapes3D factor:
+        FeatureUpperHalfTask(2).apply(train)     # upper half of the bins on pc2
+    """
+
+    def __init__(self, factor: int):
+        factor = int(factor)
+        if factor < 0:
+            raise ValueError(f"factor must be a non-negative factor index, got {factor}")
+        name = FACTOR_NAMES[factor] if factor < N_FACTORS else str(factor)
+        super().__init__(relevant_factors=[factor], label_fn=self._label,
+                         name=f"upper_half({name})", n_classes=2)
+
+    def _label(self, latent_idx: np.ndarray) -> int:
+        f = self.relevant_factors[0]
+        return int(latent_idx[f] >= FACTOR_N_VALUES[f] / 2)
+
+    def labels(self, latent_idx: np.ndarray, n_values: int) -> np.ndarray:
+        """Vectorised labels for an (N, F) array of latent indices, the feature having `n_values` values."""
+        return (np.asarray(latent_idx)[:, self.relevant_factors[0]] >= n_values / 2).astype(np.int64)
+
+    def apply(self, dataset) -> "TaskLabels":
+        """`dataset` (anything with .latent_idx) relabelled by this task; images are shared."""
+        latent, f = np.asarray(dataset.latent_idx), self.relevant_factors[0]
+        if f >= latent.shape[1]:
+            raise ValueError(f"factor {f}: the dataset has factors 0-{latent.shape[1] - 1}")
+        n_values = getattr(dataset, "factor_n_values", None)
+        if n_values is None and f >= N_FACTORS:
+            raise ValueError(f"factor {f}: the dataset has no factor_n_values to split it in half by")
+        k = n_values[f] if n_values is not None else FACTOR_N_VALUES[f]
+        return TaskLabels(dataset, self.labels(latent, k), self.n_classes)
 
 
 class TaskLabels(Dataset):

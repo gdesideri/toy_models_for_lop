@@ -372,12 +372,26 @@ def load_shapes3d_array(root: Optional[Path] = None):
     return h5py.File(str(path), "r")
 
 
+# ── MPI3D-realistic, Isaac3D (data/robot3d.py; prepared once, never downloaded here) ──
+
+def get_mpi3d_realistic(**kwargs):
+    from data.robot3d import get_robot3d
+    return get_robot3d("mpi3d_realistic", **kwargs)
+
+
+def get_isaac3d(**kwargs):
+    from data.robot3d import get_robot3d
+    return get_robot3d("isaac3d", **kwargs)
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 DATASETS = {
     "mnist":    get_mnist,
     "cifar10":  get_cifar10,
     "shapes3d": get_shapes3d,
+    "mpi3d_realistic": get_mpi3d_realistic,
+    "isaac3d":  get_isaac3d,
 }
 
 

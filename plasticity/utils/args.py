@@ -25,9 +25,9 @@ def basic_task_parser() -> argparse.ArgumentParser:
     parser.add_argument('--optimizer', type=str, default='sgd', help='Optimizer to use (sgd with momentum 0, adam)')
     parser.add_argument('--activation', type=str, default='relu', help='Activation function (relu, gelu, leaky_relu)')
     parser.add_argument('--use_layer_norm', action='store_true', help='Insert LayerNorm after each linear/conv layer')
-    parser.add_argument('--n_samples', type=int, default=None, help='Shapes3D only: number of images to load (the full set is ~5.9 GB)')
-    parser.add_argument('--target_factor', type=int, default=4, help='Shapes3D only: latent factor used as the label')
-    parser.add_argument('--label_rule', type=str, default=None, choices=['parity', 'upper_half'], help='Shapes3D only: relabel the target factor (parity: even index -> 1, odd -> 0; upper_half: index >= K/2 -> 1)')
+    parser.add_argument('--n_samples', type=int, default=None, help='Factor datasets only (shapes3d, mpi3d_realistic, isaac3d): number of images to load (the full Shapes3D is ~5.9 GB)')
+    parser.add_argument('--target_factor', type=int, default=4, help='Factor datasets only: latent factor used as the label')
+    parser.add_argument('--label_rule', type=str, default=None, choices=['parity', 'upper_half'], help='Factor datasets only: relabel the target factor (parity: even index -> 1, odd -> 0; upper_half: index >= K/2 -> 1)')
     parser.add_argument('--num_workers', type=int, default=0, help='DataLoader worker processes')
     parser.add_argument('--run_name', type=str, default=None, help='Name of the results sub-directory (default: auto)')
     parser.add_argument('--n_sample_images', type=int, default=4, help='How many example images of the task to save')
@@ -340,9 +340,16 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
                         help='With --pca_bins: how many principal components of the raw train pixels '
                              'serve as factors')
     parser.add_argument('--pca_bins', type=int, default=None,
-                        help='Use the first --pca_components principal components as factors, each cut '
-                             'into this many equal-count bins (even); task n is the parity of its bin on '
-                             'component task_factors[n] (default task_factors: every component)')
+                        help='Use the first --pca_components principal components as factors, every '
+                             'image\'s score on each cut into this many equal-count bins (even); task n '
+                             'labels the bin on component task_factors[n] by --pca_label_rule (default '
+                             'task_factors: every component)')
+    parser.add_argument('--pca_score', type=str, default='projection', choices=['projection', 'cosine'],
+                        help='With --pca_bins: an image\'s score on a component, its projection or the '
+                             'cosine similarity of the centred image (image - train mean) with the component')
+    parser.add_argument('--pca_label_rule', type=str, default='parity', choices=['parity', 'upper_half'],
+                        help='With --pca_bins: a task\'s label from the bin, parity (even bin -> 1) or '
+                             'upper_half (bin >= K/2 -> 1: score above the train median)')
     parser.add_argument('--cluster_factors', type=int, default=None,
                         help='Use this many categorical factors found by non-redundant clustering of the '
                              'train images in pixel-PCA space (data/cluster_factors.py); task n is the '

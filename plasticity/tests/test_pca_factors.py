@@ -146,3 +146,94 @@ def test_cache_with_another_version_or_settings_is_refitted(tmp_path, stale):
     np.testing.assert_array_equal(train2.latent_idx, train.latent_idx)
     with np.load(path) as cached:
         assert cached["version"] == pca_factors.CACHE_VERSION
+
+
+# ── cosine scores (--pca_score cosine) ────────────────────────────────────────
+
+def test_cosine_is_the_projection_over_the_centred_norm():
+    data = make_split(500, 0)
+    mean, components, _ = fit_pca(data, 3)
+    x = data.x.reshape(len(data), -1).double().numpy() - mean
+    cos = pca_factors.cosine(data, mean, components)
+    np.testing.assert_allclose(cos, (x @ components.T) / np.linalg.norm(x, axis=1, keepdims=True), rtol=1e-6)
+    assert np.all(np.abs(cos) <= 1)
+
+
+def test_cosine_ignores_how_far_an_image_is_from_the_mean():
+    data = make_split(300, 0)
+    mean, components, _ = fit_pca(data, 3)
+    flat = data.x.reshape(len(data), -1).double().numpy()
+    stretched = Images((mean + 3 * (flat - mean)).reshape(-1, 1, 4, 4))
+    np.testing.assert_allclose(pca_factors.cosine(stretched, mean, components),
+                               pca_factors.cosine(data, mean, components), atol=1e-5)
+
+
+def test_an_image_equal_to_the_mean_scores_zero():
+    data = make_split(300, 0)
+    mean, components, _ = fit_pca(data, 3)
+    mean = mean.astype(np.float32).astype(np.float64)          # exactly representable as an image
+    at_mean = Images(np.tile(mean, (2, 1)).reshape(2, 1, 4, 4))
+    np.testing.assert_array_equal(pca_factors.cosine(at_mean, mean, components), 0.0)
+
+
+@pytest.mark.parametrize("score", ["projection", "cosine"])
+def test_ten_bins_are_balanced_under_both_label_rules(score):
+    train, _ = with_pca_factors(make_split(4000, 0), make_split(1000, 1), 3, 10, score=score)
+    for j in range(3):
+        counts = np.bincount(train.latent_idx[:, j], minlength=10)
+        assert len(counts) == 10 and counts.max() - counts.min() <= 1
+    np.testing.assert_allclose((train.latent_idx % 2 == 0).mean(axis=0), 0.5, atol=0.01)     # parity
+    np.testing.assert_allclose((train.latent_idx >= 5).mean(axis=0), 0.5, atol=0.01)         # upper half
+
+
+def test_cosine_bins_are_not_the_projection_bins():
+    args = (make_split(4000, 0), make_split(1000, 1), 3, 10)
+    proj, _ = with_pca_factors(*args)
+    cos, _ = with_pca_factors(*args, score="cosine")
+    assert not np.array_equal(proj.latent_idx, cos.latent_idx)
+    assert np.corrcoef(proj.latent_idx[:, 0], cos.latent_idx[:, 0])[0, 1] > 0.5     # same direction
+
+
+def test_unknown_score_rejected_before_fitting(monkeypatch):
+    monkeypatch.setattr(pca_factors, "fit_pca", lambda *a, **k: pytest.fail("fitted before checking the score"))
+    with pytest.raises(ValueError, match="score"):
+        with_pca_factors(make_split(100, 0), make_split(50, 1), 3, 10, score="dot")
+
+
+def test_cache_path_names_the_score(tmp_path, monkeypatch):
+    monkeypatch.setattr(pca_factors, "DATA_ROOT", tmp_path)
+    assert pca_cache_path("cifar10", 6, 10) == tmp_path / "pca" / "cifar10_pc6_bins10.npz"
+    assert pca_cache_path("cifar10", 6, 10, "cosine") == tmp_path / "pca" / "cifar10_pc6_bins10_cos.npz"
+
+
+def test_cache_of_the_other_score_is_refitted(tmp_path):
+    path = tmp_path / "toy.npz"
+    args = (make_split(1000, 0), make_split(200, 1), 3, 10)
+    with_pca_factors(*args, cache_path=path)                                  # a projection cache ...
+    cos, _ = with_pca_factors(*args, cache_path=path, score="cosine")         # ... is not used for cosine
+    fresh, _ = with_pca_factors(*args, score="cosine")
+    np.testing.assert_array_equal(cos.latent_idx, fresh.latent_idx)
+    with np.load(path) as cached:
+        assert cached["score"].item() == "cosine"
+
+
+def test_cache_from_before_the_score_option_is_reused_for_projection(tmp_path, monkeypatch):
+    path = tmp_path / "toy.npz"
+    args = (make_split(1000, 0), make_split(200, 1), 3, 10)
+    train, _ = with_pca_factors(*args, cache_path=path)
+    with np.load(path) as cached:
+        old = {k: cached[k] for k in cached.files if k != "score"}
+    np.savez(path, **old)
+    monkeypatch.setattr(pca_factors, "fit_pca", lambda *a, **k: pytest.fail("refitted an old projection cache"))
+    train2, _ = with_pca_factors(*args, cache_path=path)
+    np.testing.assert_array_equal(train2.latent_idx, train.latent_idx)
+
+
+@pytest.mark.skipif(not (DATA_ROOT / "mnist" / "MNIST" / "raw").exists(), reason="MNIST not downloaded")
+def test_mnist_cosine_end_to_end():
+    from data.download import get_mnist
+    train, test = with_pca_factors(*get_mnist(), 6, 10, score="cosine")
+    assert train.latent_idx.shape == (60000, 6) and test.latent_idx.shape == (10000, 6)
+    np.testing.assert_allclose((train.latent_idx >= 5).mean(axis=0), 0.5, atol=0.001)
+    # test bins come from the train edges, so the test labels are only close to balanced
+    assert np.all(np.abs((test.latent_idx >= 5).mean(axis=0) - 0.5) < 0.05)

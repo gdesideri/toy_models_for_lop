@@ -6,12 +6,16 @@ A task is a label and a pixel permutation of the dataset. Three families:
     permuted pixels : a fresh permutation per task (--perm_percentage, default 100%),
                       the label fixed by --target_factor and --label_rule
     feature switches: --perm_percentage 0 --task_factors 0 1 2 3 4 5 --label_rule parity,
-                      task n labelled by the parity of Shapes3D factor task_factors[n]
-    PCA factors     : --perm_percentage 0 --pca_bins K [--pca_components n], on any dataset (mnist,
-                      cifar10, ...): task n labelled by the parity of the image's bin on principal
-                      component task_factors[n] (default: every component 0..n-1, n = 6), each
-                      component of the raw train pixels cut into K equal-count bins (K even;
-                      data/pca_factors.py)
+                      task n labelled by the parity of Shapes3D factor task_factors[n]; also on
+                      mpi3d_realistic / isaac3d (data/robot3d.py), where the robot arm's position
+                      factors are labelled by a threshold in the middle (index >= K/2) instead
+    PCA factors     : --perm_percentage 0 --pca_bins K [--pca_components n --pca_score s
+                      --pca_label_rule r], on any dataset (mnist, cifar10, ...): every image is scored on
+                      the first n principal components of the raw train pixels (s = projection, or cosine:
+                      the cosine similarity of the centred image with the component) and each score is
+                      cut into K equal-count bins (K even; data/pca_factors.py); task n labels the image's
+                      bin on component task_factors[n] (default: every component 0..n-1, n = 6) by rule r:
+                      parity (even bin -> 1) or upper_half (bin >= K/2 -> 1)
     cluster factors : --perm_percentage 0 --cluster_factors F [--clusters C --cluster_dims D], on any
                       dataset: F categorical factors, each a k-means clustering (C clusters) of the
                       train images' first D pixel-PCA coordinates, fitted so that each factor is
@@ -37,7 +41,7 @@ Run with:
         --num_epochs 10 --batch_size 256
 
 Writes results/<save_dir>/stream_<dataset>_<model>_perm<p>_<label>_seed<k>/
-(PCA runs: stream_<dataset>_<model>_perm000_pca<n>_bins<K>_seed<k>/;
+(PCA runs: stream_<dataset>_<model>_perm000_pca<n>_bins<K>[_cos][_upper_half]_seed<k>/;
 cluster runs: stream_<dataset>_<model>_perm000_clu<F>x<C>_d<D>_seed<k>/;
 class-attribute runs: stream_<dataset>_<model>_perm000_attrs-<a>-<b>-..._seed<k>/):
     args.json, summary.json        the settings; final metrics of every task so far
@@ -80,7 +84,7 @@ from data.cluster_factors import cluster_cache_path, with_cluster_factors
 from data.input_shift import ShiftedInputs, input_stats, shift_for
 from data.pca_factors import pca_cache_path, with_pca_factors
 from tasks.class_attributes import ClassAttributeTask, attribute_names
-from tasks.feature_streams import FeatureParityTask
+from tasks.feature_streams import FeatureParityTask, FeatureUpperHalfTask
 from tasks.permuted_pixels import sample_pixel_permutation, permute_dataset
 from models.factory import build_model
 from utils.checkpoints import save_checkpoint, load_checkpoint
@@ -93,10 +97,11 @@ RESUME_KEYS = ("dataset_kind", "n_samples", "target_factor", "label_rule", "perm
                "model_kind", "optimizer", "learning_rate", "batch_size", "num_epochs", "seed",
                "task_factors", "features_per_task", "keep_features", "pca_components", "pca_bins",
                "cluster_factors", "clusters", "cluster_dims", "class_tasks", "per_label",
-               "center_inputs", "input_offset")
+               "center_inputs", "input_offset", "pca_score", "pca_label_rule")
 # the value a run saved before an argument existed had, implicitly
 RESUME_DEFAULTS = {"features_per_task": 1, "pca_components": 6, "clusters": 8, "cluster_dims": 50,
-                   "per_label": 10_000, "center_inputs": 0.0, "input_offset": 0.0}
+                   "per_label": 10_000, "center_inputs": 0.0, "input_offset": 0.0,
+                   "pca_score": "projection", "pca_label_rule": "parity"}
 
 
 def changed_args(saved, params):
@@ -108,6 +113,8 @@ def resolve_task_factors(params):
     """With --pca_bins or --cluster_factors: the task factors, every one by default, checked to exist."""
     if params.cluster_factors and params.pca_bins:
         raise SystemExit("--cluster_factors and --pca_bins are different factor sources; pass only one")
+    if (params.pca_score != "projection" or params.pca_label_rule != "parity") and not params.pca_bins:
+        raise SystemExit("--pca_score / --pca_label_rule only apply to PCA factors: pass --pca_bins")
     if params.class_tasks:
         if params.cluster_factors or params.pca_bins or params.task_factors:
             raise SystemExit("--class_tasks replaces --task_factors / --pca_bins / --cluster_factors; "
@@ -148,9 +155,9 @@ if __name__ == "__main__":
     if params.pca_bins:
         # Shapes3D's split depends on the seed, so only fixed-split datasets are cached
         cache = None if params.dataset_kind == "shapes3d" else \
-            pca_cache_path(params.dataset_kind, params.pca_components, params.pca_bins)
+            pca_cache_path(params.dataset_kind, params.pca_components, params.pca_bins, params.pca_score)
         train_set, test_set = with_pca_factors(train_set, test_set, params.pca_components,
-                                               params.pca_bins, cache_path=cache)
+                                               params.pca_bins, cache_path=cache, score=params.pca_score)
         n_classes = 2
     if params.cluster_factors:
         cache = None if params.dataset_kind == "shapes3d" else \
@@ -189,6 +196,14 @@ if __name__ == "__main__":
     if params.features_per_task != 1:
         raise SystemExit("--features_per_task: only 1 feature per task is supported")
 
+    def factor_rule(factor):
+        """How a factor labels a feature task: --pca_label_rule on PCA factors, else the dataset's
+        own rule for that factor (data/robot3d.py: upper_half for the robot arm), else parity."""
+        if params.pca_bins:
+            return params.pca_label_rule
+        rules = getattr(train_set, "factor_label_rules", None)
+        return rules[factor] if rules else "parity"
+
     def feature_task(n):
         """Task n's labelling task in the feature family; None = the dataset's own label."""
         if params.class_tasks:
@@ -196,7 +211,10 @@ if __name__ == "__main__":
                                       params.per_label, params.seed)
         if not params.task_factors:
             return None
-        return FeatureParityTask([params.task_factors[n % len(params.task_factors)]])
+        factor = params.task_factors[n % len(params.task_factors)]
+        if factor_rule(factor) == "upper_half":
+            return FeatureUpperHalfTask(factor)
+        return FeatureParityTask([factor])
 
     if params.task_factors and not (params.pca_bins or params.cluster_factors) and (params.label_rule != "parity" or n_classes != 2):
         raise SystemExit("--task_factors: the feature tasks are parity tasks (2 classes, the head "
@@ -266,7 +284,8 @@ if __name__ == "__main__":
                                 torch_rng_state=torch.get_rng_state())
 
         description = task.name if params.class_tasks else \
-            "+".join(factor_names[f] for f in factors) + " parity"
+            "+".join(factor_names[f] for f in factors) + \
+            (" upper half" if task and factor_rule(factors[0]) == "upper_half" else " parity")
         print(f"── task {n + 1}/{params.n_tasks}  (label: {description}, "
               f"{len(base_train)}/{len(base_test)} images)" if task else
               f"── task {n + 1}/{params.n_tasks}")
@@ -279,8 +298,11 @@ if __name__ == "__main__":
             labels.update(attribute=task.name, n_task_train=len(base_train), n_task_test=len(base_test))
         if params.health_every and (n + 1) % params.health_every == 0:
             labels["health"] = measure_health(model, perm)
-        if params.pca_bins or params.cluster_factors or params.class_tasks:
+        if params.pca_bins or params.cluster_factors or params.class_tasks or \
+                (task and hasattr(train_set, "factor_label_rules")):
             labels["class_balance"] = float(np.mean(base_train.labels))
+        if task and hasattr(train_set, "factor_label_rules"):
+            labels["rule"] = factor_rule(factors[0])
         save_results(task_dir, params, history, model, perm, {**extra, "task": n, **labels},
                      save_model=False)
         stream.append({"task": n, **labels,
