@@ -117,3 +117,59 @@ def activation_rates_over(model, batches):
             counts = batch if counts is None else [a + b for a, b in zip(counts, batch)]
             n += len(xb)
     return [(c.double() / n).cpu() for c in counts]
+
+
+_ACTIVATIONS = (nn.ReLU, nn.LeakyReLU, nn.GELU)
+
+
+def _preactivations(model, x):
+    """(the input of each activation of model.body for the batch x, the body's output)."""
+    pre, h = [], model.flatten(x) if hasattr(model, "flatten") else x
+    for layer in model.body:
+        if isinstance(layer, _ACTIVATIONS):
+            pre.append(h)
+        h = layer(h)
+    return pre, h
+
+
+def effective_rank(h):
+    """exp(entropy of the normalised singular values of h): how many directions the rows of h use."""
+    s = torch.linalg.svdvals(h.detach().double().cpu())
+    p = s / s.sum()
+    p = p[p > 0]
+    return float(torch.exp(-(p * p.log()).sum()))
+
+
+def unit_health(model, batches, probe=None, rare=0.01):
+    """
+    The state of the hidden units of an MLP over the inputs in `batches`, as plain numbers:
+      layers         per hidden layer: units, dead (pre-activation <= 0 on every input), rare
+                     (> 0 on under `rare` of them; dead units included), median and mean rate
+      n_images       how many inputs were measured
+      weight_norms   Frobenius norm of every Linear layer, input to output
+      effective_rank of the last hidden layer's output on `probe` (a tensor of inputs), if given
+    Activity is read before the activation, so ReLU, LeakyReLU and GELU units count alike.
+    Changes nothing: no gradients, no random draws, the model's mode is restored.
+    """
+    if not hasattr(model, "body"):
+        raise ValueError(f"{type(model).__name__} has no .body of hidden layers")
+    was_training = model.training
+    model.eval()
+    counts, n = None, 0
+    with torch.no_grad():
+        for xb in batches:
+            pre, _ = _preactivations(model, xb)
+            batch = [(p > 0).sum(dim=0) for p in pre]
+            counts = batch if counts is None else [a + b for a, b in zip(counts, batch)]
+            n += len(xb)
+        layers = []
+        for c in counts:
+            rate = (c.double() / n).cpu()
+            layers.append(dict(units=len(rate), dead=int((c == 0).sum()), rare=int((rate < rare).sum()),
+                               median_rate=float(rate.median()), mean_rate=float(rate.mean())))
+        out = dict(layers=layers, n_images=n,
+                   weight_norms=[float(m.weight.norm()) for m in model.modules() if isinstance(m, nn.Linear)])
+        if probe is not None:
+            out["effective_rank"] = effective_rank(_preactivations(model, probe)[1])
+    model.train(was_training)
+    return out

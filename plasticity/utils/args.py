@@ -356,6 +356,15 @@ def tasks_stream_parser() -> argparse.ArgumentParser:
                         help='Semantic attributes of the classes (tasks/class_attributes.py, e.g. animal '
                              'four_legs fur wings wheels for cifar10); task n is the binary attribute '
                              'class_tasks[n %% len], trained on a class-balanced subset')
+    parser.add_argument('--center_inputs', type=float, default=0.0,
+                        help='Subtract this multiple of the train mean image from every input (1: centred '
+                             'inputs, no shared push; data/input_shift.py)')
+    parser.add_argument('--input_offset', type=float, default=0.0,
+                        help='Add this constant to every input (raises the shared push; '
+                             '`python -m data.input_shift --target_ratio R` gives the offset for a ratio)')
+    parser.add_argument('--health_every', type=int, default=1,
+                        help='Measure the hidden units (dead, rarely active, effective rank, weight norms) '
+                             'on the whole training set after every this many tasks; 0 = never')
     parser.add_argument('--per_label', type=int, default=10_000,
                         help='With --class_tasks: at most this many images per label (positive / negative) '
                              'in a task\'s train split; the test split uses as many as are balanced')

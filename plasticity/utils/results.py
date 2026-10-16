@@ -67,6 +67,11 @@ def run_dir_for(params, prefix: str = "") -> Path:
         task2 = getattr(params, "task2_target_factor", None)
         if task2 is not None and task2 != params.target_factor:
             label += f"_to_{SHAPES3D_FACTOR_NAMES[task2]}"
+    center, offset = getattr(params, "center_inputs", 0.0) or 0.0, getattr(params, "input_offset", 0.0) or 0.0
+    if center:
+        label += f"_c{center:g}"
+    if offset:
+        label += f"_off{offset:g}"
     run_name = params.run_name or prefix + (
         f"{params.dataset_kind}_{params.model_kind}_"
         f"perm{int(round(100 * params.perm_percentage)):03d}{label}_seed{params.seed}"

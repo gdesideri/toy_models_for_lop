@@ -48,6 +48,14 @@ class-attribute runs: stream_<dataset>_<model>_perm000_attrs-<a>-<b>-..._seed<k>
     task_<n>/checkpoints/epoch_<e>.pt   snapshots over the epochs (utils.checkpoints); the last
                                    epoch is always saved and holds the task's final weights
 
+Inputs: --center_inputs a subtracts a x the train mean image from every input and --input_offset c
+adds c (data/input_shift.py), after the labels are made, so a shifted run has the same tasks as an
+unshifted one. summary.json records `input_stats` (the shared push of the inputs the network sees).
+Unit health: unless --health_every 0, the hidden units are measured on the whole training set (as
+the network sees it in that task) at init and after every k-th task: dead and rarely active units,
+effective rank, weight norms (utils.evaluation.unit_health) -> `init_health` and each task's `health`.
+Measuring runs on a forked RNG, so it does not change training or --resume.
+
 Long streams: --deadline_h stops cleanly between tasks before the wall-time limit, and
 --resume continues a run directory after its last completed task. Every snapshot stores
 the torch RNG state and the task draws are replayed, so a resumed stream continues
@@ -66,15 +74,17 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.args import parse_tasks_stream_args
-from data.factory import build_dataset, build_loaders, dataset_spec
+from data.factory import build_dataset, build_eval_loader, build_loaders, dataset_spec
 from data.download import SHAPES3D_FACTOR_NAMES
 from data.cluster_factors import cluster_cache_path, with_cluster_factors
+from data.input_shift import ShiftedInputs, input_stats, shift_for
 from data.pca_factors import pca_cache_path, with_pca_factors
 from tasks.class_attributes import ClassAttributeTask, attribute_names
 from tasks.feature_streams import FeatureParityTask
 from tasks.permuted_pixels import sample_pixel_permutation, permute_dataset
 from models.factory import build_model
 from utils.checkpoints import save_checkpoint, load_checkpoint
+from utils.evaluation import unit_health
 from utils.results import run_dir_for, save_results, save_summary
 from experiments.run_basic_task_training import train
 
@@ -82,10 +92,11 @@ from experiments.run_basic_task_training import train
 RESUME_KEYS = ("dataset_kind", "n_samples", "target_factor", "label_rule", "perm_percentage",
                "model_kind", "optimizer", "learning_rate", "batch_size", "num_epochs", "seed",
                "task_factors", "features_per_task", "keep_features", "pca_components", "pca_bins",
-               "cluster_factors", "clusters", "cluster_dims", "class_tasks", "per_label")
+               "cluster_factors", "clusters", "cluster_dims", "class_tasks", "per_label",
+               "center_inputs", "input_offset")
 # the value a run saved before an argument existed had, implicitly
 RESUME_DEFAULTS = {"features_per_task": 1, "pca_components": 6, "clusters": 8, "cluster_dims": 50,
-                   "per_label": 10_000}
+                   "per_label": 10_000, "center_inputs": 0.0, "input_offset": 0.0}
 
 
 def changed_args(saved, params):
@@ -153,6 +164,25 @@ if __name__ == "__main__":
               f"max off-diagonal NMI {off_diagonal.max() if off_diagonal.size else 0.0:.3f}")
     if params.class_tasks:
         n_classes = 2
+    shift = shift_for(train_set, params.center_inputs, params.input_offset)
+    if shift is not None:
+        # after the factor wrappers: the labels (and their caches) are those of the unshifted run
+        train_set, test_set = ShiftedInputs(train_set, shift), ShiftedInputs(test_set, shift)
+    stats = input_stats(train_set)
+    print(f"inputs: shared push {stats['shared_push']:.1f}, unit spread {stats['unit_spread']:.2f}, "
+          f"push/spread {stats['push_over_spread']:.1f}")
+    probe_idx = np.sort(np.random.default_rng([params.seed, 11]).choice(
+        len(train_set), min(5000, len(train_set)), replace=False))
+
+    def measure_health(model, perm):
+        """Unit health on the whole training set as the network sees it in a task (forked RNG)."""
+        data = permute_dataset(train_set, perm)
+        device = next(model.parameters()).device
+        with torch.random.fork_rng(devices=[]):        # a DataLoader pass draws from the torch RNG
+            batches = (x.to(device) for x, _ in build_eval_loader(data, 2048, params.num_workers))
+            probe = torch.stack([data[int(i)][0] for i in probe_idx]).to(device)
+            return unit_health(model, batches, probe)
+
     factor_names = attribute_names(params.dataset_kind) if params.class_tasks else \
         getattr(train_set, "factor_names", SHAPES3D_FACTOR_NAMES)
 
@@ -172,13 +202,14 @@ if __name__ == "__main__":
         raise SystemExit("--task_factors: the feature tasks are parity tasks (2 classes, the head "
                          "carries over); pass --label_rule parity")
     run_dir = run_dir_for(params, prefix="stream_")
-    stream = []
+    stream, saved_summary = [], {}
     if params.resume and (run_dir / "summary.json").exists():
         saved = json.load(open(run_dir / "args.json"))
         changed = changed_args(saved, params)
         if changed:
             raise SystemExit(f"--resume: {run_dir} was run with different {changed}")
-        stream = json.load(open(run_dir / "summary.json"))["tasks"]
+        saved_summary = json.load(open(run_dir / "summary.json"))
+        stream = saved_summary["tasks"]
     save_summary(run_dir, vars(params), name="args.json")
 
     # build a model
@@ -198,8 +229,13 @@ if __name__ == "__main__":
         for _ in range(start):
             sample_pixel_permutation(h * w, params.perm_percentage, rng)
         print(f"resuming after task {start - 1} ({last})")
+    model = model.to(params.device)
     extra = {"n_train": len(train_set), "n_test": len(test_set), "image_shape": [c, h, w],
-             "n_classes": n_classes, "n_params": sum(p.numel() for p in model.parameters())}
+             "n_classes": n_classes, "n_params": sum(p.numel() for p in model.parameters()),
+             "input_stats": stats}
+    if params.health_every:
+        extra["init_health"] = saved_summary.get("init_health") if start else \
+            measure_health(model, np.arange(h * w))
     print(f"{params.dataset_kind} {c}x{h}x{w} ({len(train_set)}/{len(test_set)}), {n_classes} classes | "
           f"{params.model_kind} | {params.n_tasks} tasks x {params.num_epochs} epochs, "
           f"{params.optimizer} lr {params.learning_rate} | {100 * params.perm_percentage:.0f}% permuted")
@@ -241,6 +277,8 @@ if __name__ == "__main__":
             labels["explained_variance"] = [float(train_set.explained_variance[f]) for f in factors]
         if params.class_tasks:
             labels.update(attribute=task.name, n_task_train=len(base_train), n_task_test=len(base_test))
+        if params.health_every and (n + 1) % params.health_every == 0:
+            labels["health"] = measure_health(model, perm)
         if params.pca_bins or params.cluster_factors or params.class_tasks:
             labels["class_balance"] = float(np.mean(base_train.labels))
         save_results(task_dir, params, history, model, perm, {**extra, "task": n, **labels},
