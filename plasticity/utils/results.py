@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from data.download import SHAPES3D_FACTOR_NAMES
+from data.robot3d import ROBOT3D
 
 
 def run_dir_for(params, prefix: str = "") -> Path:
@@ -43,11 +44,16 @@ def run_dir_for(params, prefix: str = "") -> Path:
     elif pca_bins:
         n = params.pca_components
         label = f"_pca{n}_bins{pca_bins}"
+        if getattr(params, "pca_score", "projection") == "cosine":
+            label += "_cos"
+        rule = getattr(params, "pca_label_rule", "parity")
+        if rule != "parity":
+            label += f"_{rule}"
         if factors and list(factors) != list(range(n)):
             label += "_features" + "-".join(str(f) for f in factors)
     elif params.dataset_kind == "shapes3d" and t1:
         label = f"_set{''.join(map(str, t1))}_to_set{''.join(map(str, t2))}_{getattr(params, 'set_rule', 'parity')}"
-    elif params.dataset_kind == "shapes3d" and factors:
+    elif (params.dataset_kind == "shapes3d" or params.dataset_kind in ROBOT3D) and factors:
         label = "_features" + "".join(str(f) for f in factors)
         k = getattr(params, "features_per_task", 1) or 1
         keep = getattr(params, "keep_features", None)

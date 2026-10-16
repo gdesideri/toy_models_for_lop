@@ -127,3 +127,41 @@ def test_old_shapes3d_run_resumes_without_cluster_keys():
 def test_resume_with_other_clusters_refused():
     saved = vars(parse_tasks_stream_args(["--cluster_factors", "6"]))
     assert changed_args(saved, parse_tasks_stream_args(["--cluster_factors", "6", "--clusters", "4"])) == ["clusters"]
+
+
+def test_pca_score_and_label_rule_parse_with_defaults():
+    p = parse_tasks_stream_args([])
+    assert p.pca_score == "projection" and p.pca_label_rule == "parity"
+    p = parse_tasks_stream_args(["--pca_bins", "10", "--pca_score", "cosine", "--pca_label_rule", "upper_half"])
+    assert (p.pca_score, p.pca_label_rule) == ("cosine", "upper_half")
+
+
+@pytest.mark.parametrize("flags", [["--pca_score", "cosine"], ["--pca_label_rule", "upper_half"],
+                                   ["--cluster_factors", "6", "--pca_label_rule", "upper_half"]])
+def test_pca_score_or_label_rule_without_pca_bins_refused(flags):
+    with pytest.raises(SystemExit, match="--pca_bins"):
+        resolve_task_factors(parse_tasks_stream_args(flags))
+
+
+def test_cosine_and_upper_half_run_names(tmp_path):
+    def name(**settings):
+        p = _params(tmp_path, dataset_kind="cifar10", model_kind="mlp_2x120", perm_percentage=0.0,
+                    pca_bins=10, pca_components=6, task_factors=list(range(6)), seed=0)
+        for k, v in settings.items():
+            setattr(p, k, v)
+        return run_dir_for(p, prefix="stream_").name
+
+    base = "stream_cifar10_mlp_2x120_perm000_pca6_bins10"
+    assert name() == f"{base}_seed0"
+    assert name(pca_score="cosine") == f"{base}_cos_seed0"
+    assert name(pca_label_rule="upper_half") == f"{base}_upper_half_seed0"
+    assert name(pca_score="cosine", pca_label_rule="upper_half", task_factors=[2]) == \
+        f"{base}_cos_upper_half_features2_seed0"
+
+
+def test_old_pca_run_resumes_and_another_score_or_rule_is_refused():
+    p = parse_tasks_stream_args(["--pca_bins", "8"])
+    saved = {k: v for k, v in vars(p).items() if k not in ("pca_score", "pca_label_rule")}
+    assert changed_args(saved, p) == []
+    cosine = parse_tasks_stream_args(["--pca_bins", "8", "--pca_score", "cosine", "--pca_label_rule", "upper_half"])
+    assert changed_args(saved, cosine) == ["pca_score", "pca_label_rule"]

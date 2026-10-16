@@ -5,10 +5,13 @@ visualization_scripts/pca_factors.py — What the PCA factors of a dataset look 
 --view bins (default): one row per principal component
     left   the component as an image (red = positive weight, blue = negative;
            for colour datasets the component is min-max scaled to RGB)
-    middle histogram of the train images' projections on it, the K - 1 bin edges
-           as vertical lines, coloured by the parity label (even bin -> 1, odd -> 0)
-    right  one train image per bin, the one closest to the bin's median projection,
-           from bin 0 (lowest projection) to bin K - 1
+    middle histogram of the train images' scores on it, the K - 1 bin edges
+           as vertical lines, coloured by the label (--rule parity: even bin -> 1, odd -> 0;
+           upper_half: bin >= K/2 -> 1)
+    right  one train image per bin, the one closest to the bin's median score,
+           from bin 0 (lowest score) to bin K - 1
+--score projection (default) or cosine (cosine similarity of the centred image with the
+component, as run_tasks_stream --pca_score cosine) is the score every view uses.
 
 --view modes: one row per principal component, its modes
     middle histogram coloured by a two-component Gaussian mixture fitted to the
@@ -31,11 +34,12 @@ visualization_scripts/pca_factors.py — What the PCA factors of a dataset look 
 
 Run with:
     uv run python -m visualization_scripts.pca_factors --dataset mnist --components 6 --bins 8
+    uv run python -m visualization_scripts.pca_factors --dataset cifar10 --bins 10 --score cosine --rule upper_half
     uv run python -m visualization_scripts.pca_factors --dataset mnist --view modes
     uv run python -m visualization_scripts.pca_factors --dataset mnist --view joint --pairs 3
 
-Writes results/pca_factors_<dataset>_pc<n>_bins<K>.png, results/pca_modes_<dataset>_pc<n>.png
-       or results/pca_joint_modes_<dataset>.png
+Writes results/pca_factors_<dataset>_pc<n>_bins<K>[_cos][_upper_half].png,
+       results/pca_modes_<dataset>_pc<n>[_cos].png or results/pca_joint_modes_<dataset>[_cos].png
 """
 from __future__ import annotations
 
@@ -52,7 +56,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
 from data.download import get_dataset
-from data.pca_factors import assign_bins, bin_edges, fit_pca, project
+from data.pca_factors import assign_bins, bin_edges, fit_pca, scores
 from visualization_scripts.common import PALETTE, RESULTS, bold_suptitle, save, set_style
 
 
@@ -215,6 +219,13 @@ def choose_pairs(proj, n_pairs, min_weight=0.1, n_sample=10_000, seed=0):
 
 # ── Views ─────────────────────────────────────────────────────────────────────
 
+SCORE_AXIS = {"projection": "projection on the component", "cosine": "cosine similarity with the component"}
+
+
+def score_suffix(args):
+    return "_cos" if args.score == "cosine" else ""
+
+
 def plot_bins(args, train, shape, components, ratio, proj):
     n = args.components
     edges = bin_edges(proj[:, :n], args.bins)
@@ -228,9 +239,10 @@ def plot_bins(args, train, shape, components, ratio, proj):
 
         counts, fine = np.histogram(proj[:, j], bins=120)
         centers = (fine[:-1] + fine[1:]) / 2
-        even = np.searchsorted(edges[j], centers, side="right") % 2 == 0
+        b = np.searchsorted(edges[j], centers, side="right")
+        one = b % 2 == 0 if args.rule == "parity" else b >= args.bins / 2
         ax_hist.bar(centers, counts, width=np.diff(fine), linewidth=0,
-                    color=np.where(even, PALETTE[0], PALETTE[1]))
+                    color=np.where(one, PALETTE[0], PALETTE[1]))
         for e in edges[j]:
             ax_hist.axvline(e, color="0.4", linewidth=0.8)
         ax_hist.set_yticks([])
@@ -244,17 +256,20 @@ def plot_bins(args, train, shape, components, ratio, proj):
         clean(ax_ex)
         ax_ex.set_xticks([b * (shape[2] + 2) + shape[2] / 2 for b in range(args.bins)],
                          [str(b) for b in range(args.bins)])
-    axes[-1, 1].set_xlabel("projection on the component")
+    axes[-1, 1].set_xlabel(SCORE_AXIS[args.score])
     axes[-1, 2].set_xlabel("bin")
     axes[0, 0].set_title("component")
-    axes[0, 1].set_title("train projections and bin edges")
+    axes[0, 1].set_title("train scores and bin edges")
     axes[0, 2].set_title("one image per bin")
-    fig.legend(handles=[Patch(color=PALETTE[0], label="even bin (label 1)"),
-                        Patch(color=PALETTE[1], label="odd bin (label 0)")],
+    half = args.bins // 2
+    one, zero = (("even bin", "odd bin") if args.rule == "parity" else (f"bin >= {half}", f"bin < {half}"))
+    fig.legend(handles=[Patch(color=PALETTE[0], label=f"{one} (label 1)"),
+                        Patch(color=PALETTE[1], label=f"{zero} (label 0)")],
                loc="lower center", ncol=2, frameon=False)
-    bold_suptitle(fig, f"PCA factors of {args.dataset}: {n} components, {args.bins} bins")
+    bold_suptitle(fig, f"PCA factors of {args.dataset}: {n} components, {args.score} scores, {args.bins} bins")
     fig.tight_layout(rect=(0, 0.03, 1, 0.97))
-    return fig, RESULTS / f"pca_factors_{args.dataset}_pc{n}_bins{args.bins}.png"
+    rule = "" if args.rule == "parity" else f"_{args.rule}"
+    return fig, RESULTS / f"pca_factors_{args.dataset}_pc{n}_bins{args.bins}{score_suffix(args)}{rule}.png"
 
 
 def plot_modes(args, train, shape, components, ratio, proj):
@@ -296,16 +311,16 @@ def plot_modes(args, train, shape, components, ratio, proj):
               f"{valley_split:>13} {gmm_split:>10}")
 
         show_examples(ax_ex, train, [nearest(p, mu[0]), nearest(p, mu[1])], shape)
-    axes[-1, 1].set_xlabel("projection on the component")
+    axes[-1, 1].set_xlabel(SCORE_AXIS[args.score])
     axes[0, 0].set_title("component")
-    axes[0, 1].set_title("projections, modes and 2-component mixture")
+    axes[0, 1].set_title("scores, modes and 2-component mixture")
     axes[0, 2].set_title("images nearest each mixture mean (low | high)")
     fig.legend(handles=[Patch(color=PALETTE[0], label="low component"),
                         Patch(color=PALETTE[1], label="high component")],
                loc="lower center", ncol=2, frameon=False)
     bold_suptitle(fig, f"Modes of the PCA components of {args.dataset}")
     fig.tight_layout(rect=(0, 0.03, 1, 0.97))
-    return fig, RESULTS / f"pca_modes_{args.dataset}_pc{n}.png"
+    return fig, RESULTS / f"pca_modes_{args.dataset}_pc{n}{score_suffix(args)}.png"
 
 
 def plot_joint(args, train, shape, components, ratio, proj):
@@ -359,7 +374,7 @@ def plot_joint(args, train, shape, components, ratio, proj):
                loc="lower center", ncol=2, frameon=False)
     bold_suptitle(fig, f"Two-cluster modes in pairs of PCA components of {args.dataset}")
     fig.tight_layout(rect=(0, 0.04, 1, 0.96))
-    return fig, RESULTS / f"pca_joint_modes_{args.dataset}.png"
+    return fig, RESULTS / f"pca_joint_modes_{args.dataset}{score_suffix(args)}.png"
 
 
 def main():
@@ -371,13 +386,17 @@ def main():
     parser.add_argument("--search_components", type=int, default=20,
                         help="joint: look for pairs among this many components")
     parser.add_argument("--pairs", type=int, default=3, help="joint: pairs to show")
+    parser.add_argument("--score", choices=["projection", "cosine"], default="projection",
+                        help="an image's score on a component (data/pca_factors.py)")
+    parser.add_argument("--rule", choices=["parity", "upper_half"], default="parity",
+                        help="bins: the label the histogram is coloured by")
     args = parser.parse_args()
 
     train, _ = get_dataset(args.dataset)
     shape = tuple(train[0][0].shape)                                  # (C, H, W)
     n_fit = args.search_components if args.view == "joint" else args.components
     mean, components, ratio = fit_pca(train, n_fit)
-    proj = project(train, mean, components)
+    proj = scores(train, mean, components, args.score)
 
     set_style()
     view = {"bins": plot_bins, "modes": plot_modes, "joint": plot_joint}[args.view]
