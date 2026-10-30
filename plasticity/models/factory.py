@@ -53,7 +53,8 @@ def build_model(
         "minimal"     — 1 hidden layer of 4, bias-free (bias is forced off)
         "minimal_2"   — 1 hidden layer of 2, bias-free
         "minimal_8"   — 1 hidden layer of 8, bias-free
-        "shallow_<h>" — 1 hidden layer of width h
+        "shallow_<h>" — 1 hidden layer of width h; hidden_bias= / output_bias=
+                        set the two layers' biases separately
         "deep_<h>"    — 4 hidden layers of width h
         "linear"      — a single linear layer
 
@@ -99,7 +100,8 @@ def build_model(
             **kwargs,
         )
 
-    toy = _build_toy(arch_lower, d_in, bias)
+    toy = _build_toy(arch_lower, d_in, bias,
+                     hidden_bias=kwargs.get("hidden_bias"), output_bias=kwargs.get("output_bias"))
     if toy is not None:
         return toy
 
@@ -109,8 +111,12 @@ def build_model(
     )
 
 
-def _build_toy(arch: str, d_in: int | None, bias: bool) -> nn.Module | None:
-    """The scalar-output toy networks of models/toy.py, or None if `arch` is not one."""
+def _build_toy(arch: str, d_in: int | None, bias: bool, hidden_bias: bool | None = None,
+               output_bias: bool | None = None) -> nn.Module | None:
+    """
+    The scalar-output toy networks of models/toy.py, or None if `arch` is not one.
+    `hidden_bias` / `output_bias` (shallow_<h> only) override `bias` for one layer.
+    """
     fixed = {"minimal": 4, "minimal_2": 2, "minimal_8": 8}
     is_toy = (arch in fixed or arch == "linear"
               or re.fullmatch(r"(shallow|deep)_\d+", arch) is not None)
@@ -122,7 +128,8 @@ def _build_toy(arch: str, d_in: int | None, bias: bool) -> nn.Module | None:
     if arch in fixed:
         return MinimalNet(d_in, hidden=fixed[arch], bias=False)   # bias-free for geometric tests
     if arch.startswith("shallow_"):
-        return ShallowNet(d_in, hidden=int(arch.split("_")[1]), bias=bias)
+        return ShallowNet(d_in, hidden=int(arch.split("_")[1]), bias=bias,
+                          hidden_bias=hidden_bias, output_bias=output_bias)
     if arch.startswith("deep_"):
         return DeepNet(d_in, hidden=int(arch.split("_")[1]), bias=bias)
     return LinearNet(d_in, bias=bias)
