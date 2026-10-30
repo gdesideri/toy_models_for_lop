@@ -18,8 +18,8 @@
 # Before the first launch, on a node that can download (cd plasticity; the GPU nodes cannot):
 #   uv sync
 #   uv run python -m data.robot3d prepare mpi3d_realistic                  # downloads ~12 GB, keeps 480k
-#   uv run python -m data.robot3d prepare isaac3d --source /path/to/Isaac3D_down128
-#       (the 128x128 release, downloaded by hand from github.com/NVlabs/High-res-disentanglement-datasets)
+#   uv run python -m data.robot3d prepare isaac3d          # streams the 204 GB zip (hours), keeps 480k at 64px;
+#                                                          # rerun the same command if it gets interrupted
 #
 # Usage (from plasticity/):
 #   DRY_RUN=1 bash experiments/launch_scripts/launch_robot3d_single.sh    # print the sbatch commands only

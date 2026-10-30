@@ -50,11 +50,14 @@ class MinimalNet(nn.Module):
 class ShallowNet(nn.Module):
     """
     One hidden layer, width in {32, 64, 128, 256}.
+    `hidden_bias` / `output_bias` override `bias` for one layer, e.g. a bias-free
+    hidden layer with a trainable output bias (the orthogonal-tasks experiment).
     """
-    def __init__(self, d_in: int, hidden: int = 64, bias: bool = True):
+    def __init__(self, d_in: int, hidden: int = 64, bias: bool = True,
+                 hidden_bias: bool | None = None, output_bias: bool | None = None):
         super().__init__()
-        self.fc1 = _linear(d_in, hidden, bias)
-        self.fc2 = _linear(hidden, 1, bias)
+        self.fc1 = _linear(d_in, hidden, bias if hidden_bias is None else hidden_bias)
+        self.fc2 = _linear(hidden, 1, bias if output_bias is None else output_bias)
         self.act = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

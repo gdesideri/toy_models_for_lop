@@ -5,7 +5,7 @@ rendered from a full grid of discrete factors, every image's factor values known
     mpi3d_realistic  1 036 800 images, 64x64 (the 512x512 renders downsampled by the authors)
                      object_color 6, object_shape 6, object_size 2, camera_height 3,
                      background_color 3, horizontal_axis 40, vertical_axis 40
-    isaac3d          737 280 images, 128x128 (the downsampled release of the 512x512 renders)
+    isaac3d          737 280 images, 512x512 (the public release; its 128x128 one needs a sign-in)
                      object_shape 3, robot_x 8, robot_y 5, camera_height 4, object_scale 4,
                      lighting_intensity 4, lighting_y_dir 6, object_color 4, wall_color 4
 
@@ -24,10 +24,13 @@ Prepare once, on a node that can download (GPU nodes cannot); this writes
 --n_keep images (default 480 000, the size of Shapes3D; 0 = all), resized to --resolution
 (default 64, the Shapes3D resolution) and stored as one uint8 array the loader memory-maps:
 
-    uv run python -m data.robot3d prepare mpi3d_realistic                 # downloads the npz (~12 GB)
-    uv run python -m data.robot3d prepare isaac3d --source /path/to/Isaac3D_down128
-        (the unzipped 128x128 release, downloaded by hand from the Google Drive link of
-         github.com/NVlabs/High-res-disentanglement-datasets: a folder of 737 280 PNGs)
+    uv run python -m data.robot3d prepare mpi3d_realistic     # downloads the npz (~12 GB)
+    uv run python -m data.robot3d prepare isaac3d             # streams Isaac3D.zip (204 GB), stores ~6 GB
+
+Isaac3D is read straight out of the zip of github.com/NVlabs/High-res-disentanglement-datasets
+by HTTP range requests: only the kept PNGs are decoded and downsampled (512 -> 64), nothing else
+is written, and rerunning the command after an interruption continues where it stopped.
+--source also takes a local copy of the zip or an unzipped folder of the PNGs.
 
 Then:
     train, test = get_robot3d("isaac3d", n_samples=50_000, rng=np.random.default_rng(0))
@@ -37,11 +40,16 @@ Then:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import queue
 import struct
+import threading
+import time
 import urllib.request
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -81,10 +89,13 @@ ROBOT3D = {
                       "lighting_intensity", "lighting_y_dir", "object_color", "wall_color"),
         factor_n_values=(3, 8, 5, 4, 4, 4, 6, 4, 4),
         threshold_factors=(1, 2),
-        native_resolution=128),
+        native_resolution=512),
 }
 
 MPI3D_REALISTIC_URL = "https://huggingface.co/datasets/waleedgondal/mpi3d/resolve/main/mpi3d_realistic.npz"
+# the full 512x512 release (Isaac3D.zip, 204 GB); the 128x128 one needs a Google sign-in
+ISAAC3D_URL = ("https://drive.usercontent.google.com/download?id=1vFkgK4CpHpCOBOU7l07yocrqAqr2uDox"
+               "&export=download&confirm=t")
 DEFAULT_N_KEEP = 480_000
 
 # as Shapes3D: images from [0, 1] to [-1, 1]
@@ -140,10 +151,15 @@ def _resize(img: np.ndarray, resolution: int) -> np.ndarray:
     return np.asarray(Image.fromarray(img).resize((resolution, resolution), Image.BOX))
 
 
-def _load_png(args):
-    path, resolution = args
+def _decode_png(args):
+    """(PNG bytes, as stored in a zip with `compress_type`, resolution) -> (res, res, 3) uint8."""
+    data, compress_type, resolution = args
     from PIL import Image
-    with Image.open(path) as im:
+    if compress_type == zipfile.ZIP_DEFLATED:
+        data = zlib.decompress(data, -15)
+    elif compress_type != zipfile.ZIP_STORED:
+        raise ValueError(f"zip compression method {compress_type} is not supported")
+    with Image.open(io.BytesIO(data)) as im:
         return _resize(np.asarray(im.convert("RGB")), resolution)
 
 
@@ -154,26 +170,38 @@ def _select(n_images, n_keep, seed):
     return np.sort(np.random.default_rng(seed).choice(n_images, size=n_keep, replace=False))
 
 
-def _write(name, resolution, indices, fill, meta, root=None, block=8192):
+def _write(name, resolution, indices, blocks, meta, root=None):
     """
-    Writes images.npy (len(indices), res, res, 3) uint8 and indices.npy, filling the images
-    a block at a time with fill(block_indices) -> (n, res, res, 3); renamed into place last,
-    so an interrupted run leaves no half-written dataset behind.
+    Writes images.npy (len(indices), res, res, 3) uint8 and indices.npy from blocks(start), an
+    iterable of (rows, images, done): images (k, res, res, 3) for those rows of the output, and how
+    many steps of the work are done after them. Progress is saved after every block, so rerunning
+    with the same settings continues an interrupted preparation from step `start`; images.npy only
+    appears, renamed into place, once complete.
     """
     out = prepared_dir(name, resolution, root)
     out.mkdir(parents=True, exist_ok=True)
-    tmp = out / f"images.{os.getpid()}.tmp.npy"
-    images = np.lib.format.open_memmap(tmp, mode="w+", dtype=np.uint8,
-                                       shape=(len(indices), resolution, resolution, 3))
-    for start in range(0, len(indices), block):
-        images[start:start + block] = fill(indices[start:start + block])
-        print(f"\r  {min(start + block, len(indices))}/{len(indices)} images", end="", flush=True)
+    partial, progress = out / "images.partial.npy", out / "progress.json"
+    start = 0
+    if partial.exists() and progress.exists() and json.loads(progress.read_text())["meta"] == meta:
+        start = json.loads(progress.read_text())["done"]
+        images = np.lib.format.open_memmap(partial, mode="r+")
+        print(f"  continuing an interrupted preparation after step {start}")
+    else:
+        images = np.lib.format.open_memmap(partial, mode="w+", dtype=np.uint8,
+                                           shape=(len(indices), resolution, resolution, 3))
+    t0 = time.time()
+    for rows, block, done in blocks(start):
+        images[rows] = block
+        images.flush()
+        progress.write_text(json.dumps(dict(meta=meta, done=int(done))))
+        rate = (done - start) / max(time.time() - t0, 1e-9)
+        print(f"\r  {done}/{len(indices)} images, {rate:.0f}/s", end="", flush=True)
     print()
-    images.flush()
     del images
     np.save(out / "indices.npy", indices.astype(np.int64))
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
-    os.replace(tmp, out / "images.npy")
+    os.replace(partial, out / "images.npy")
+    progress.unlink()
     return out
 
 
@@ -196,33 +224,205 @@ def prepare_mpi3d_realistic(source=None, resolution=64, n_keep=DEFAULT_N_KEEP, s
     if len(raw) != spec.n_images:
         raise ValueError(f"{source}: {len(raw)} images, expected {spec.n_images}")
     indices = _select(spec.n_images, n_keep, seed)
-    fill = lambda idx: np.stack([_resize(np.asarray(raw[i]), resolution) for i in idx]) \
-        if resolution != raw.shape[1] else np.asarray(raw[idx])
+
+    def blocks(start, size=8192):
+        for s in range(start, len(indices), size):
+            idx = indices[s:s + size]
+            imgs = np.asarray(raw[idx]) if resolution == raw.shape[1] else \
+                np.stack([_resize(np.asarray(raw[i]), resolution) for i in idx])
+            yield slice(s, s + len(idx)), imgs, s + len(idx)
+
     meta = dict(dataset="mpi3d_realistic", source=str(source), resolution=resolution,
                 n_keep=len(indices), seed=seed)
-    return _write("mpi3d_realistic", resolution, indices, fill, meta, root)
+    return _write("mpi3d_realistic", resolution, indices, blocks, meta, root)
 
 
-def prepare_isaac3d(source, resolution=64, n_keep=DEFAULT_N_KEEP, seed=0, root=None, workers=8):
+# Isaac3D is read straight out of its zip -- a local file or, by HTTP range requests, the URL --
+# so the 737 280 PNGs are never unpacked and the 204 GB archive need not be stored.
+
+def _get(url, headers, stream=False, retries=10):
+    """A GET that must return 206 Partial Content, retried with backoff on network errors."""
+    import requests
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=headers, stream=stream, timeout=120)
+            if r.status_code != 206:
+                raise ValueError(f"{url}: no byte range served (HTTP {r.status_code}, "
+                                 f"{r.headers.get('content-type')}); a sign-in page means the file is not public")
+            return r
+        except requests.RequestException as e:
+            if attempt == retries - 1:
+                raise
+            print(f"\n  {e}; retrying in {2 ** min(attempt, 6)} s")
+            time.sleep(2 ** min(attempt, 6))
+
+
+class _HTTPRangeFile(io.RawIOBase):
+    """A remote file read by range requests: seekable, so zipfile can read its central directory."""
+
+    def __init__(self, url):
+        self.url, self.pos = url, 0
+        self.size = int(_get(url, {"Range": "bytes=0-0"}).headers["Content-Range"].rsplit("/", 1)[1])
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, offset, whence=0):
+        self.pos = {0: offset, 1: self.pos + offset, 2: self.size + offset}[whence]
+        return self.pos
+
+    def read(self, n=-1):
+        end = self.size if n is None or n < 0 else min(self.size, self.pos + n)
+        if end <= self.pos:
+            return b""
+        data = _get(self.url, {"Range": f"bytes={self.pos}-{end - 1}"}).content
+        self.pos += len(data)
+        return data
+
+
+class _StreamReader:
     """
-    Writes the prepared Isaac3D from `source`, the unzipped release: a folder holding the
-    737 280 PNGs (directly or in images/), named by their zero-padded index.
+    Reads a remote file at increasing offsets through one streaming download: the bytes between
+    reads are skipped in the stream; a backwards read or a gap over `max_gap` starts a new
+    download at the offset, and so does a dropped connection (up to `retries` times per read).
+    """
+
+    def __init__(self, url, max_gap=256 << 20, retries=20):
+        self.url, self.max_gap, self.retries = url, max_gap, retries
+        self.raw, self.pos = None, 0
+
+    def _open(self, offset):
+        self.close()
+        self.response = _get(self.url, {"Range": f"bytes={offset}-"}, stream=True)
+        self.raw, self.pos = self.response.raw, offset
+
+    def _read(self, n):
+        chunks = []
+        while n:
+            chunk = self.raw.read(min(n, 1 << 20))
+            if not chunk:
+                raise ConnectionError("the download ended early")
+            chunks.append(chunk)
+            n -= len(chunk)
+            self.pos += len(chunk)
+        return b"".join(chunks)
+
+    def read_at(self, offset, n):
+        for attempt in range(self.retries):
+            try:
+                if self.raw is None or offset < self.pos or offset - self.pos > self.max_gap:
+                    self._open(offset)
+                while self.pos < offset:
+                    self._read(min(offset - self.pos, 1 << 20))
+                return self._read(n)
+            except Exception as e:                       # requests / urllib3 / socket errors alike
+                if attempt == self.retries - 1:
+                    raise
+                print(f"\n  connection lost at byte {self.pos} ({type(e).__name__}); reconnecting")
+                self.close()
+                time.sleep(min(60, 2 ** attempt))
+
+    def close(self):
+        if self.raw is not None:
+            self.response.close()
+            self.raw = None
+
+
+class _FileReader:
+    def __init__(self, path):
+        self.f = open(path, "rb")
+
+    def read_at(self, offset, n):
+        self.f.seek(offset)
+        return self.f.read(n)
+
+    def close(self):
+        self.f.close()
+
+
+def _member_bytes(reader, info):
+    """The stored (possibly deflated) bytes of zip member `info`, through `reader`."""
+    header = reader.read_at(info.header_offset, 30)
+    if header[:4] != b"PK\x03\x04":
+        raise ValueError(f"bad zip local header for {info.filename}")
+    name_len, extra_len = struct.unpack("<HH", header[26:30])
+    return reader.read_at(info.header_offset + 30 + name_len + extra_len, info.compress_size)
+
+
+def _prefetched(iterable, depth=2):
+    """`iterable` run ahead by up to `depth` items in a thread (downloads overlap decoding)."""
+    q, end = queue.Queue(depth), object()
+
+    def run():
+        try:
+            for item in iterable:
+                q.put(item)
+            q.put(end)
+        except BaseException as e:
+            q.put(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    while (item := q.get()) is not end:
+        if isinstance(item, BaseException):
+            raise item
+        yield item
+
+
+def prepare_isaac3d(source=None, resolution=64, n_keep=DEFAULT_N_KEEP, seed=0, root=None, workers=8,
+                    block=1024):
+    """
+    Writes the prepared Isaac3D from `source`: the URL of the release's zip (default: the full
+    512x512 Isaac3D.zip, 204 GB, streamed once and never stored), a local copy of a zip, or an
+    unzipped folder of the 737 280 PNGs (directly or in images/), named by their zero-padded index.
+    Zip members are read in archive order (shuffled with respect to the index), each image written
+    to its own row; an interrupted run continues when rerun with the same settings.
     """
     from multiprocessing import Pool
 
     spec = _spec("isaac3d")
-    source = Path(source)
-    folder = source / "images" if (source / "images").is_dir() else source
-    files = sorted(folder.glob("*.png"))
-    if len(files) != spec.n_images:
-        raise ValueError(f"{folder}: {len(files)} PNGs, expected {spec.n_images}")
+    source = str(source or ISAAC3D_URL)
+    remote = source.startswith(("http://", "https://"))
+    if not remote and Path(source).is_dir():
+        folder = Path(source) / "images" if (Path(source) / "images").is_dir() else Path(source)
+        members = sorted(folder.glob("*.png"))
+        reader, offsets = None, np.arange(len(members))
+    else:
+        with zipfile.ZipFile(_HTTPRangeFile(source) if remote else source) as zf:
+            members = sorted((i for i in zf.infolist() if i.filename.endswith(".png")),
+                             key=lambda i: i.filename)
+        reader = _StreamReader(source) if remote else _FileReader(source)
+        offsets = np.array([i.header_offset for i in members])
+    if len(members) != spec.n_images:
+        raise ValueError(f"{source}: {len(members)} PNGs, expected {spec.n_images}")
     indices = _select(spec.n_images, n_keep, seed)
-    with Pool(workers) as pool:
-        fill = lambda idx: np.stack(pool.map(_load_png, [(files[i], resolution) for i in idx],
-                                             chunksize=64))
-        meta = dict(dataset="isaac3d", source=str(source), resolution=resolution,
-                    n_keep=len(indices), seed=seed)
-        return _write("isaac3d", resolution, indices, fill, meta, root)
+    order = np.argsort(offsets[indices], kind="stable")          # output rows, in reading order
+
+    def raw_blocks(start):
+        for s in range(start, len(order), block):
+            rows = order[s:s + block]
+            if reader is None:
+                data = [(members[indices[r]].read_bytes(), zipfile.ZIP_STORED, resolution) for r in rows]
+            else:
+                data = [(_member_bytes(reader, members[indices[r]]), members[indices[r]].compress_type,
+                         resolution) for r in rows]
+            yield rows, data, s + len(rows)
+
+    meta = dict(dataset="isaac3d", source=source, resolution=resolution, n_keep=len(indices), seed=seed)
+    try:
+        with Pool(workers) as pool:
+            def blocks(start):
+                for rows, data, done in _prefetched(raw_blocks(start)):
+                    yield rows, np.stack(pool.map(_decode_png, data, chunksize=16)), done
+            return _write("isaac3d", resolution, indices, blocks, meta, root)
+    finally:
+        if reader is not None:
+            reader.close()
 
 
 # ── loading ───────────────────────────────────────────────────────────────────
@@ -308,8 +508,7 @@ def get_robot3d(name, root=None, resolution=64, train_frac=0.9, n_samples=None, 
     if not (folder / "images.npy").exists():
         raise FileNotFoundError(
             f"{folder}/images.npy not found: prepare {name} first, on a node that can download:\n"
-            f"  uv run python -m data.robot3d prepare {name}"
-            + (" --source /path/to/Isaac3D_down128" if name == "isaac3d" else ""))
+            f"  uv run python -m data.robot3d prepare {name}")
     rng = rng if rng is not None else np.random.default_rng(0)
 
     all_images = np.load(folder / "images.npy", mmap_mode="r")
@@ -341,7 +540,8 @@ def main(argv=None):
     prep = sub.add_parser("prepare")
     prep.add_argument("dataset", choices=list(ROBOT3D))
     prep.add_argument("--source", default=None,
-                      help="mpi3d_realistic: the .npz (default: download it); isaac3d: the unzipped PNG folder")
+                      help="mpi3d_realistic: the .npz (default: download it); isaac3d: the zip's URL (default: "
+                           "the public 512x512 release, streamed), a local zip or an unzipped PNG folder")
     prep.add_argument("--resolution", type=int, default=64)
     prep.add_argument("--n_keep", type=int, default=DEFAULT_N_KEEP, help="random images kept; 0 = all")
     prep.add_argument("--seed", type=int, default=0)
@@ -350,8 +550,6 @@ def main(argv=None):
     if args.dataset == "mpi3d_realistic":
         out = prepare_mpi3d_realistic(args.source, args.resolution, args.n_keep, args.seed)
     else:
-        if args.source is None:
-            parser.error("isaac3d: pass --source, the unzipped folder of the 128x128 release")
         out = prepare_isaac3d(args.source, args.resolution, args.n_keep, args.seed, workers=args.workers)
     print(f"prepared {args.dataset} -> {out}")
 
