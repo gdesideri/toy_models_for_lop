@@ -18,6 +18,7 @@ uv run python -m experiments.run_tasks_stream --dataset_kind shapes3d --target_f
 uv run python -m experiments.run_factor_rule_stream --n 256 --seed 0 ...
 uv run python -m memorization_plasticity.run --dataset cifar10 --arch mlp_2x512 --p_change 0.1 --L 500
 uv run python -m representation_plasticity.run --stream ladder --arch mlp_2x512 --switch_every 2000
+uv run python -m data.pca_factors --dataset cifar10 --bins 10 --score cosine   # build, cache and describe a PCA-factor benchmark
 uv run python -m visualization_scripts.<script>                # most plots; some take --compute
 uv run python visualization_scripts/toy_models/<script>.py     # toy-model scripts: config is set at the top of the file
 ```
@@ -28,10 +29,11 @@ Unit health (dead / rarely active units, effective rank) is logged per task by `
 
 Shapes3D must be downloaded once (GPU nodes cannot download):
 `uv run python -c "from data.download import download_shapes3d; download_shapes3d()"`. Data is cached under `data/_cache/` or `$PLASTICITY_DATA_DIR`.
+The robot-arm factor datasets (`data/robot3d.py`) are prepared once into a 480k-image 64×64 `.npy`: `uv run python -m data.robot3d prepare mpi3d_realistic` (downloads) and `... prepare isaac3d` (streams the public 204 GB zip by range requests, never stores it; resumable). Their benchmark: `launch_robot3d_single.sh` (each task alone, solvability) before `launch_robot3d.sh` (streams).
 
 ### Cluster (Slurm)
 
-`launch_all.sh` (class-attribute / cluster-factor streams) and `launch_validation.sh` (the shared-push experiments: centred inputs, offsets, lr, leaky ReLU, width) submit whole experiment sets through `submit_stream_array.sh`; run them with `bash`, `DRY_RUN=1` first. `submit_unit_health.sh` measures units of older runs post hoc.
+`launch_all.sh` (class-attribute / cluster-factor streams), `launch_validation.sh` (the shared-push experiments: centred inputs, offsets, lr, leaky ReLU, width) and `launch_pca_cosine.sh` (PCA factors scored by cosine similarity, parity and upper-half labels) submit whole experiment sets through `submit_stream_array.sh`; run them with `bash`, `DRY_RUN=1` first. `submit_unit_health.sh` measures units of older runs post hoc.
 
 `experiments/launch_scripts/submit_*.sh` are Slurm array jobs (H100 partition, account `v170be`). Submit from `plasticity/`: `sbatch experiments/launch_scripts/<script>.sh`. They are configured with environment variables (e.g. `SEEDS`, `MODEL_KIND`, `N_TASKS`, `RUN_TAG`, `PERM`, `TASK_FACTORS`), one array index per seed/config, run `uv run --no-sync`, and expect `.venv` to exist already. Long streams use `--deadline_h` + `--resume` and the script resubmits itself only if the job made progress. (Some usage comments still say `experiments/submit_*.sh`; the scripts are in `launch_scripts/`.)
 

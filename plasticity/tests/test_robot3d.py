@@ -1,10 +1,16 @@
 """data/robot3d.py: preparing and loading MPI3D-realistic / Isaac3D, their label rules, and a short
 feature stream on them through experiments/run_tasks_stream.py. The real files are never touched:
 preparing runs on a tiny factor grid, the stream on a fake prepared dataset."""
+import functools
+import http.server
+import io
 import json
 import os
 import subprocess
 import sys
+import threading
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -62,20 +68,105 @@ def test_prepare_and_load_mpi3d(tmp_path, monkeypatch):
     assert x.shape == (3, 8, 8) and y is not None
 
 
-def test_prepare_isaac3d_from_pngs_downsampled(tmp_path, monkeypatch):
-    spec = Robot3DSpec(ROBOT3D["isaac3d"].factor_names, (2, 2, 3, 1, 1, 1, 1, 2, 2), (1, 2), 16)
+ISAAC_TINY = (2, 2, 3, 1, 1, 1, 1, 2, 2)        # 48 images, Isaac3D's factor layout
+
+
+def _png(i):
+    buffer = io.BytesIO()
+    Image.fromarray(np.full((16, 16, 3), i, dtype=np.uint8)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _isaac_zip(path, n):
+    """The release's layout: Isaac3D/images/<index>.png, members in shuffled order, deflated."""
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("Isaac3D/", b"")
+        for i in np.random.default_rng(3).permutation(n):
+            zf.writestr(f"Isaac3D/images/{i:06d}.png", _png(int(i)),
+                        compress_type=zipfile.ZIP_DEFLATED if i % 2 else zipfile.ZIP_STORED)
+    return path
+
+
+class _RangeHandler(http.server.SimpleHTTPRequestHandler):
+    """Serves files with HTTP range requests (bytes=a-b and bytes=a-), as Google Drive does."""
+
+    def do_GET(self):
+        data = Path(self.directory, self.path.lstrip("/")).read_bytes()
+        start, end = self.headers["Range"].removeprefix("bytes=").split("-")
+        start, end = int(start), int(end) if end else len(data) - 1
+        self.send_response(206)
+        self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        self.wfile.write(data[start:end + 1])
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def isaac_tiny(monkeypatch):
+    spec = Robot3DSpec(ROBOT3D["isaac3d"].factor_names, ISAAC_TINY, (1, 2), 16)
     monkeypatch.setitem(ROBOT3D, "isaac3d", spec)
+    return spec
+
+
+def test_prepare_isaac3d_from_pngs_downsampled(tmp_path, isaac_tiny):
     (tmp_path / "src" / "images").mkdir(parents=True)
-    for i in range(spec.n_images):
-        Image.fromarray(np.full((16, 16, 3), i, dtype=np.uint8)).save(tmp_path / "src" / "images" / f"{i:06d}.png")
+    for i in range(isaac_tiny.n_images):
+        (tmp_path / "src" / "images" / f"{i:06d}.png").write_bytes(_png(i))
 
     out = robot3d.prepare_isaac3d(tmp_path / "src", resolution=8, n_keep=0, root=tmp_path, workers=2)
-    assert np.load(out / "images.npy").shape == (spec.n_images, 8, 8, 3)
-    _check_latents(*get_robot3d("isaac3d", root=tmp_path, resolution=8, normalize=False), spec)
+    assert np.load(out / "images.npy").shape == (isaac_tiny.n_images, 8, 8, 3)
+    _check_latents(*get_robot3d("isaac3d", root=tmp_path, resolution=8, normalize=False), isaac_tiny)
+
+
+def test_prepare_isaac3d_from_a_local_zip(tmp_path, isaac_tiny):
+    source = _isaac_zip(tmp_path / "Isaac3D.zip", isaac_tiny.n_images)
+    robot3d.prepare_isaac3d(source, resolution=8, n_keep=30, root=tmp_path, workers=2, block=7)
+    train, test = get_robot3d("isaac3d", root=tmp_path, resolution=8, normalize=False)
+    assert len(train) + len(test) == 30
+    _check_latents(train, test, isaac_tiny)
+
+
+def test_prepare_isaac3d_streamed_by_range_requests(tmp_path, isaac_tiny):
+    _isaac_zip(tmp_path / "Isaac3D.zip", isaac_tiny.n_images)
+    handler = functools.partial(_RangeHandler, directory=str(tmp_path))
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{server.server_address[1]}/Isaac3D.zip"
+        robot3d.prepare_isaac3d(url, resolution=8, n_keep=0, root=tmp_path, workers=2, block=5)
+        server.shutdown()
+    _check_latents(*get_robot3d("isaac3d", root=tmp_path, resolution=8, normalize=False), isaac_tiny)
+
+
+def test_interrupted_preparation_continues(tmp_path, isaac_tiny, monkeypatch):
+    source = _isaac_zip(tmp_path / "Isaac3D.zip", isaac_tiny.n_images)
+    calls = []
+    member_bytes = robot3d._member_bytes
+
+    def flaky(reader, info):
+        calls.append(info.filename)
+        if len(calls) == 20:
+            raise ConnectionError("killed")
+        return member_bytes(reader, info)
+
+    monkeypatch.setattr(robot3d, "_member_bytes", flaky)
+    with pytest.raises(ConnectionError):
+        robot3d.prepare_isaac3d(source, resolution=8, n_keep=0, root=tmp_path, workers=2, block=8)
+    folder = robot3d.prepared_dir("isaac3d", 8, tmp_path)
+    assert not (folder / "images.npy").exists()
+    assert json.loads((folder / "progress.json").read_text())["done"] == 16      # two whole blocks
+
+    calls.clear()
+    monkeypatch.setattr(robot3d, "_member_bytes", member_bytes)
+    robot3d.prepare_isaac3d(source, resolution=8, n_keep=0, root=tmp_path, workers=2, block=8)
+    assert not (folder / "progress.json").exists()
+    _check_latents(*get_robot3d("isaac3d", root=tmp_path, resolution=8, normalize=False), isaac_tiny)
 
 
 def test_missing_prepared_dataset_says_how_to_prepare(tmp_path):
-    with pytest.raises(FileNotFoundError, match="prepare isaac3d --source"):
+    with pytest.raises(FileNotFoundError, match="data.robot3d prepare isaac3d"):
         get_robot3d("isaac3d", root=tmp_path)
 
 
