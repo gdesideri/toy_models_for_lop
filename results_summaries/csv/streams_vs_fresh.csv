@@ -1,0 +1,9 @@
+benchmark,stream_group,single_group,tasks_done,fresh_test_acc,stream_first5,stream_last5,stream_train_last5
+"CIFAR-10 class attributes, 2x120",cifar10_class_stream_mlp_2x120,cifar10_class_single_mlp_2x120,600,0.7897183333333333,0.7907473333333334,0.7268720000000001,1.0
+"CIFAR-10 cluster factors, 2x120",cifar10_cluster_stream_mlp_2x120,cifar10_cluster_single_mlp_2x120,600,0.86705,0.8536766666666668,0.8271755555555554,0.9999988888888888
+"MNIST cluster factors, 2x30 *",mnist_cluster_stream_mlp_2x30,mnist_cluster_single_mlp_2x30,287,0.8825444444444445,0.861961111111111,0.8639199999999999,0.8718394444444444
+"MNIST cluster factors, 2x120 *",mnist_cluster_stream_mlp_2x120,mnist_cluster_single_mlp_2x120,287,0.8840833333333333,0.888655,0.9355644444444444,0.9629357407407408
+"PCA-cosine CIFAR-10 parity, 2x120",pca_cos_cifar10_parity_mlp_2x120,pca_cos_cifar10_parity_single_mlp_2x120,600,0.5694944444444444,0.5759477777777778,0.5621733333333334,0.9999997777777776
+"PCA-cosine CIFAR-10 upper half, 2x120",pca_cos_cifar10_upper_half_mlp_2x120,pca_cos_cifar10_upper_half_single_mlp_2x120,600,0.9836666666666668,0.9840444444444444,0.9852144444444444,0.9937186666666666
+"PCA-cosine MNIST parity, 2x30",pca_cos_mnist_parity_mlp_2x30,pca_cos_mnist_parity_single_mlp_2x30,600,0.5840666666666666,0.5872211111111111,0.5971611111111111,0.6151135185185185
+"PCA-cosine MNIST upper half, 2x30",pca_cos_mnist_upper_half_mlp_2x30,pca_cos_mnist_upper_half_single_mlp_2x30,600,0.9898888888888888,0.9902711111111112,0.4991888888888889,0.4979018518518518

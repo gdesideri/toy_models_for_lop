@@ -1,0 +1,298 @@
+{
+  "split_sizes": {
+    "train": 388800,
+    "val": 43200,
+    "test": 48000
+  },
+  "pretraining_heads_per_factor": {
+    "train": {
+      "floor_hue": {
+        "loss": 0.029583001294683036,
+        "acc": 0.9965946502057613
+      },
+      "wall_hue": {
+        "loss": 0.04332864058851705,
+        "acc": 0.9946322016460906
+      },
+      "object_hue": {
+        "loss": 0.03894974313369749,
+        "acc": 0.9967618312757202
+      },
+      "object_size": {
+        "loss": 1.0803228746029576,
+        "acc": 0.39786779835390945
+      },
+      "object_type": {
+        "loss": 0.37053749603008534,
+        "acc": 0.8045061728395062
+      },
+      "object_azimuth": {
+        "loss": 0.350780964815077,
+        "acc": 0.9220190329218108
+      }
+    },
+    "val": {
+      "floor_hue": {
+        "loss": 0.030951545944920292,
+        "acc": 0.9958564814814815
+      },
+      "wall_hue": {
+        "loss": 0.04382219855984052,
+        "acc": 0.9937962962962963
+      },
+      "object_hue": {
+        "loss": 0.039512884335385426,
+        "acc": 0.9965740740740741
+      },
+      "object_size": {
+        "loss": 1.0823699031052767,
+        "acc": 0.39988425925925924
+      },
+      "object_type": {
+        "loss": 0.3712836136641326,
+        "acc": 0.8052546296296297
+      },
+      "object_azimuth": {
+        "loss": 0.35259028275807697,
+        "acc": 0.9203472222222222
+      }
+    },
+    "test": {
+      "floor_hue": {
+        "loss": 0.02986763816078504,
+        "acc": 0.9962083333333334
+      },
+      "wall_hue": {
+        "loss": 0.04499743036429087,
+        "acc": 0.9937083333333333
+      },
+      "object_hue": {
+        "loss": 0.03901786714792252,
+        "acc": 0.9968125
+      },
+      "object_size": {
+        "loss": 1.072315788269043,
+        "acc": 0.40039583333333334
+      },
+      "object_type": {
+        "loss": 0.36870193560918174,
+        "acc": 0.8060625
+      },
+      "object_azimuth": {
+        "loss": 0.35298320730527244,
+        "acc": 0.9205416666666667
+      }
+    }
+  },
+  "representation_probes": [
+    {
+      "factor": "floor_hue",
+      "classes": 10,
+      "train_loss": 0.0035374383356636813,
+      "train_accuracy": 0.9999974279835391,
+      "val_loss": 0.0036034748023720804,
+      "val_accuracy": 1.0,
+      "test_loss": 0.003559235934788982,
+      "test_accuracy": 1.0
+    },
+    {
+      "factor": "wall_hue",
+      "classes": 10,
+      "train_loss": 0.0055175134407762635,
+      "train_accuracy": 0.9999665637860082,
+      "val_loss": 0.005576471765698106,
+      "val_accuracy": 0.9999305555555555,
+      "test_loss": 0.0056408555793265504,
+      "test_accuracy": 0.9998958333333333
+    },
+    {
+      "factor": "object_hue",
+      "classes": 10,
+      "train_loss": 0.006427800625853946,
+      "train_accuracy": 0.9997890946502057,
+      "val_loss": 0.006516923562244132,
+      "val_accuracy": 0.9997453703703704,
+      "test_loss": 0.006481081642210483,
+      "test_accuracy": 0.9997291666666667
+    },
+    {
+      "factor": "object_size",
+      "classes": 8,
+      "train_loss": 1.9953881308865646,
+      "train_accuracy": 0.802798353909465,
+      "val_loss": 1.9860331422311288,
+      "val_accuracy": 0.801875,
+      "test_loss": 1.9752796179453531,
+      "test_accuracy": 0.8033333333333333
+    },
+    {
+      "factor": "object_type",
+      "classes": 4,
+      "train_loss": 2.319115548349702,
+      "train_accuracy": 0.7886728395061728,
+      "val_loss": 2.34836844197026,
+      "val_accuracy": 0.7853935185185185,
+      "test_loss": 2.2996935036977133,
+      "test_accuracy": 0.7899791666666667
+    },
+    {
+      "factor": "object_azimuth",
+      "classes": 15,
+      "train_loss": 0.5770640693476171,
+      "train_accuracy": 0.8778215020576132,
+      "val_loss": 0.591779688640877,
+      "val_accuracy": 0.8756944444444444,
+      "test_loss": 0.5931540931065877,
+      "test_accuracy": 0.8760833333333333
+    }
+  ],
+  "final_current_task_test_accuracy": 0.9737499952316284,
+  "sanity_checks": {
+    "1_dataset": {
+      "image_shape": [
+        64,
+        64,
+        3
+      ],
+      "d_in": 12288,
+      "factor_cardinalities": {
+        "floor_hue": 10,
+        "wall_hue": 10,
+        "object_hue": 10,
+        "object_size": 8,
+        "object_type": 4,
+        "object_azimuth": 15
+      },
+      "split_sizes": {
+        "train": 388800,
+        "val": 43200,
+        "test": 48000
+      }
+    },
+    "2_encoder_output": {
+      "batch_shape": [
+        256,
+        30
+      ],
+      "n": 30
+    },
+    "12_representation_quality": {
+      "floor_hue": 1.0,
+      "wall_hue": 0.9998958333333333,
+      "object_hue": 0.9997291666666667,
+      "object_size": 0.8033333333333333,
+      "object_type": 0.7899791666666667,
+      "object_azimuth": 0.8760833333333333
+    },
+    "10_same_image_changing_target": {
+      "train_index": 0,
+      "image_sum": 7304.05517578125,
+      "z_norm": 113.78643798828125,
+      "z_matches_cache": true,
+      "tasks": {
+        "task_0": {
+          "relevant_factor": "floor_hue",
+          "factor_index": 6,
+          "num_values": 10,
+          "label": 1
+        },
+        "task_1": {
+          "relevant_factor": "wall_hue",
+          "factor_index": 2,
+          "num_values": 10,
+          "label": 0
+        },
+        "task_2": {
+          "relevant_factor": "object_hue",
+          "factor_index": 8,
+          "num_values": 10,
+          "label": 1
+        },
+        "task_3": {
+          "relevant_factor": "object_size",
+          "factor_index": 1,
+          "num_values": 8,
+          "label": 0
+        },
+        "task_4": {
+          "relevant_factor": "object_type",
+          "factor_index": 0,
+          "num_values": 4,
+          "label": 0
+        },
+        "task_5": {
+          "relevant_factor": "object_azimuth",
+          "factor_index": 12,
+          "num_values": 15,
+          "label": 1
+        }
+      }
+    },
+    "11_binary_targets": {
+      "train_values": [
+        0,
+        1
+      ],
+      "test_values": [
+        0,
+        1
+      ],
+      "class1_fraction_test": {
+        "floor_hue": 0.49933332204818726,
+        "wall_hue": 0.5009166598320007,
+        "object_hue": 0.49674999713897705,
+        "object_size": 0.4989374876022339,
+        "object_type": 0.5026666522026062,
+        "object_azimuth": 0.46420833468437195
+      }
+    },
+    "8_feature_cycle": {
+      "task_0": "floor_hue",
+      "task_1": "wall_hue",
+      "task_2": "object_hue",
+      "task_3": "object_size",
+      "task_4": "object_type",
+      "task_5": "object_azimuth",
+      "task_6": "floor_hue",
+      "task_7": "wall_hue"
+    },
+    "9_task_counts": {
+      "floor_hue": 134,
+      "wall_hue": 134,
+      "object_hue": 133,
+      "object_size": 133,
+      "object_type": 133,
+      "object_azimuth": 133
+    },
+    "4_optimizer_isolation": {
+      "optimizer": "SGD",
+      "momentum": 0.0,
+      "param_shapes": [
+        [
+          2,
+          30
+        ],
+        [
+          2
+        ]
+      ]
+    },
+    "3_frozen_encoder": {
+      "n_checks": 8,
+      "unchanged": true,
+      "cache_matches_encoder_at_end": true
+    },
+    "5_single_head": {
+      "heads_built": 1,
+      "same_object_all_tasks": true
+    },
+    "6_head_continuity": {
+      "transitions_checked": 799,
+      "all_equal": true
+    },
+    "7_single_optimizer": {
+      "optimizers_built": 1,
+      "same_object_all_tasks": true
+    }
+  }
+}
